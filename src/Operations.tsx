@@ -41,6 +41,7 @@ import {
 } from "./ui"
 import {
   cardTypes,
+  cards,
   customerGroups,
   date,
   estates,
@@ -74,6 +75,13 @@ const parks = estates.flatMap((e) =>
     label: `${park} · ${e.short}`,
   })),
 )
+const residentApartmentCodes = [
+  ...new Set(
+    cards
+      .filter((card) => card.group === "Cư dân" && card.apartment !== "—")
+      .map((card) => card.apartment),
+  ),
+].sort((a, b) => a.localeCompare(b, "vi", { numeric: true }))
 const statusTone = (s: string) =>
   s === "Trong kho"
     ? "blue"
@@ -103,6 +111,8 @@ interface Editor {
   plate: string
   group: string
   apartment: string
+  apartmentQuery: string
+  apartmentResults: string[] | null
   contract: string
   contractEnd: string
   effectiveFrom: string
@@ -305,21 +315,25 @@ export default function Operations({
         !fieldErrors.plate &&
         (editor.type === "VIP" ||
           (editor.group &&
-            (editor.group !== "Cư dân" || editor.apartment.trim()) &&
+            (editor.group !== "Cư dân" || editor.apartment) &&
             (editor.group !== "Gian hàng" ||
               (editor.contract.trim() && editor.contractEnd >= today))))
       : editor.note.trim()) &&
     editor.effectiveFrom &&
     (!editor.expiry ? editor.type === "VIP" : !fieldErrors.expiry)
-  const set = (key: keyof Editor, value: string) => {
+  const set = (key: Exclude<keyof Editor, "apartmentResults">, value: string) => {
+    const switchesToVip = key === "type" && value === "VIP"
+    const resetsApartment = key === "group" || switchesToVip
     setEditor((old) =>
       old
         ? {
             ...old,
             [key]: value,
             ...(key === "parkKey" || key === "vehicle" ? { code: "" } : {}),
-            ...(key === "type" && value === "VIP"
-              ? { group: "", apartment: "", contract: "" }
+            ...(switchesToVip ? { group: "", contract: "" } : {}),
+            ...(resetsApartment ? { apartmentQuery: "" } : {}),
+            ...(resetsApartment || key === "apartmentQuery"
+              ? { apartment: "", apartmentResults: null }
               : {}),
           }
         : old,
@@ -329,6 +343,17 @@ export default function Operations({
       setSelected([])
       setScanError("")
     }
+  }
+  function searchApartments() {
+    if (!editor) return
+    const query = normalize(editor.apartmentQuery)
+    if (!query) return
+    setEditor({
+      ...editor,
+      apartmentResults: residentApartmentCodes.filter((code) =>
+        normalize(code).includes(query),
+      ),
+    })
   }
   function openEditor(kind: Editor["kind"], replace?: Subscription) {
     const selectedPark = replace
@@ -351,6 +376,8 @@ export default function Operations({
       plate: replace?.plate || "",
       group: replace?.group || "Cư dân",
       apartment: replace?.apartment || "",
+      apartmentQuery: "",
+      apartmentResults: null,
       contract: replace?.contract || "",
       contractEnd: replace?.contractEnd || "2026-12-31",
       effectiveFrom: today,
@@ -796,6 +823,80 @@ export default function Operations({
       ]}
     />
   )
+  const listToolbar = (
+    <div className="op-table-toolbar">
+      <div className="search-box">
+        <Search size={16} />
+        <Input
+          aria-label="Tìm kiếm nghiệp vụ"
+          maxLength={100}
+          placeholder={
+            isCardList
+              ? "Mã thẻ, chủ thẻ, biển số, mã thuê bao…"
+              : "Tìm mã, tên hoặc số biên bản…"
+          }
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {search && (
+          <Button
+            variant="ghost"
+            aria-label="Xóa tìm kiếm"
+            onClick={() => setSearch("")}
+          >
+            <X size={14} />
+          </Button>
+        )}
+      </div>
+      <div className="op-list-filters">
+        {parkFilterControl}
+        {isCardList && (
+          <Select
+            aria-label="Lọc trạng thái thẻ"
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value)
+              setPage(1)
+            }}
+            options={[
+              { value: "", label: "Tất cả trạng thái" },
+              ...cardStatuses,
+            ]}
+          />
+        )}
+        {(isCardList || screen === "subscriptions") && (
+          <Select
+            aria-label="Lọc loại thẻ"
+            value={typeFilter}
+            onChange={(e) => {
+              setTypeFilter(e.target.value)
+              setPage(1)
+            }}
+            options={[
+              { value: "", label: "Tất cả loại thẻ" },
+              ...cardTypes.filter(
+                (t) => screen !== "subscriptions" || t !== "Vãng lai",
+              ),
+            ]}
+          />
+        )}
+        {isCardList && (
+          <Select
+            aria-label="Lọc phương tiện thẻ"
+            value={vehicleFilter}
+            onChange={(e) => {
+              setVehicleFilter(e.target.value)
+              setPage(1)
+            }}
+            options={[
+              { value: "", label: "Tất cả phương tiện" },
+              ...vehicles,
+            ]}
+          />
+        )}
+      </div>
+    </div>
+  )
   const footer = (
     <div className="pagination">
       <span className="muted">
@@ -973,6 +1074,7 @@ export default function Operations({
         <>
           {screen === "inventory" && (
             <>
+              <div className="panel mb-5">{listToolbar}</div>
               <div className="settings-info">
                 <Warehouse size={17} />
                 <span>
@@ -1045,81 +1147,10 @@ export default function Operations({
             </div>
           )}
           <section className="panel">
-            <div className="op-table-toolbar">
-              <div className="search-box">
-                <Search size={16} />
-                <Input
-                  aria-label="Tìm kiếm nghiệp vụ"
-                  maxLength={100}
-                  placeholder={
-                    isCardList
-                      ? "Mã thẻ, chủ thẻ, biển số, mã thuê bao…"
-                      : "Tìm mã, tên hoặc số biên bản…"
-                  }
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                {search && (
-                  <Button
-                    variant="ghost"
-                    aria-label="Xóa tìm kiếm"
-                    onClick={() => setSearch("")}
-                  >
-                    <X size={14} />
-                  </Button>
-                )}
-              </div>
-              <div className="op-list-filters">
-                {parkFilterControl}
-                {isCardList && (
-                  <Select
-                    aria-label="Lọc trạng thái thẻ"
-                    value={statusFilter}
-                    onChange={(e) => {
-                      setStatusFilter(e.target.value)
-                      setPage(1)
-                    }}
-                    options={[
-                      { value: "", label: "Tất cả trạng thái" },
-                      ...cardStatuses,
-                    ]}
-                  />
-                )}
-                {(isCardList || screen === "subscriptions") && (
-                  <Select
-                    aria-label="Lọc loại thẻ"
-                    value={typeFilter}
-                    onChange={(e) => {
-                      setTypeFilter(e.target.value)
-                      setPage(1)
-                    }}
-                    options={[
-                      { value: "", label: "Tất cả loại thẻ" },
-                      ...cardTypes.filter(
-                        (t) => screen !== "subscriptions" || t !== "Vãng lai",
-                      ),
-                    ]}
-                  />
-                )}
-                {isCardList && (
-                  <Select
-                    aria-label="Lọc phương tiện thẻ"
-                    value={vehicleFilter}
-                    onChange={(e) => {
-                      setVehicleFilter(e.target.value)
-                      setPage(1)
-                    }}
-                    options={[
-                      { value: "", label: "Tất cả phương tiện" },
-                      ...vehicles,
-                    ]}
-                  />
-                )}
-              </div>
-            </div>
+            {screen !== "inventory" && listToolbar}
             {screen === "inventory" && (
               <>
-                <div className="panel-heading warehouse-overview-heading">
+                <div className="panel-heading">
                   <div>
                     <Heading>Tổng quan theo kho bãi</Heading>
                     <span className="muted">
@@ -1902,15 +1933,68 @@ export default function Operations({
                           />
                         </Field>
                         {editor.group === "Cư dân" && (
-                          <Field label="Căn hộ" required>
-                            <Input
-                              disabled={!!subscription}
-                              maxLength={255}
-                              value={editor.apartment}
-                              onChange={(e) => set("apartment", e.target.value)}
-                              placeholder="Ví dụ: S1.01-1205"
-                            />
-                          </Field>
+                          <div className="field">
+                            <Label
+                              className="field-label"
+                              htmlFor="resident-apartment-query"
+                            >
+                              Căn hộ<span className="required"> *</span>
+                            </Label>
+                            <div className="op-scan-field">
+                              <Input
+                                id="resident-apartment-query"
+                                disabled={!!subscription}
+                                maxLength={255}
+                                value={
+                                  subscription
+                                    ? editor.apartment
+                                    : editor.apartmentQuery
+                                }
+                                onChange={(e) =>
+                                  set("apartmentQuery", e.target.value)
+                                }
+                                onKeyDown={(e) => {
+                                  if (
+                                    e.key === "Enter" &&
+                                    !e.nativeEvent.isComposing
+                                  ) {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                  }
+                                }}
+                                placeholder="Ví dụ: S1.1-1024"
+                              />
+                              {!subscription && (
+                                <Button
+                                  disabled={!normalize(editor.apartmentQuery)}
+                                  onClick={searchApartments}
+                                >
+                                  <Search size={14} />
+                                  Tìm kiếm
+                                </Button>
+                              )}
+                            </div>
+                            {editor.apartmentResults && (
+                              <>
+                                <span className="field-hint" role="status">
+                                  {editor.apartmentResults.length
+                                    ? `Tìm thấy ${fmt(editor.apartmentResults.length)} căn hộ.`
+                                    : "Không tìm thấy căn hộ phù hợp."}
+                                </span>
+                                {editor.apartmentResults.length > 0 && (
+                                  <Select
+                                    aria-label="Chọn căn hộ"
+                                    value={editor.apartment}
+                                    onChange={(e) => set("apartment", e.target.value)}
+                                    options={[
+                                      { value: "", label: "Chọn căn hộ" },
+                                      ...editor.apartmentResults,
+                                    ]}
+                                  />
+                                )}
+                              </>
+                            )}
+                          </div>
                         )}
                         {editor.group === "Gian hàng" && (
                           <>

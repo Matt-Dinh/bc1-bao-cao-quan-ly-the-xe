@@ -55,7 +55,6 @@
 .op-table .estate-code { font-size: 9px; margin-top: 6px; }
 .op-table.warehouse-table { min-width: 740px; }
 .warehouse-table th:not(:first-child), .warehouse-table td:not(:first-child) { text-align: right; }
-.warehouse-overview-heading { border-top: 1px solid #edf0f4; }
 .warehouse-table .warehouse-ready { color: #547aaf; font-weight: 600; }
 .op-code { font-size: 11px; font-weight: 500; }
 .op-row-actions { justify-content: flex-end; gap: 2px; }
