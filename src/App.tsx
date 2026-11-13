@@ -36,6 +36,7 @@ import {
   LoaderCircle,
   Menu,
   Package,
+  ParkingSquare,
   PanelLeftClose,
   Pencil,
   RefreshCw,
@@ -80,6 +81,13 @@ import {
 import type { Card, Filters, Screen, Threshold } from "./data"
 import Operations from "./Operations"
 import ReportDashboard from "./ReportDashboard"
+import Parking from "./Parking"
+import useParking from "./useParking"
+import {
+  canOpen, dayAt, defaultParkingFilters, demoAccess, displayTime, isParkingScreen,
+  parkingMenus, parkingRoles, shiftDay, siteById, vnToday,
+} from "./parking-model"
+import type { ParkingAccess, ParkingScreen, Role } from "./parking-model"
 import { operationMenus } from "./operations-model"
 import type { OperationScreen } from "./operations-model"
 import {
@@ -122,6 +130,8 @@ type Drill = {
 interface LeaveTarget {
   report?: Screen
   operation?: OperationScreen
+  parking?: { screen: ParkingScreen; patch?: Record<string, string | null>; preserve?: boolean }
+  access?: ParkingAccess
 }
 interface Change {
   estate: string
@@ -174,6 +184,25 @@ const getInitial = () => {
 }
 const initial = getInitial()
 function App() {
+  const [parking, setParking] = useState<ParkingScreen | null>(() => {
+    const value = new URLSearchParams(location.search).get("module")
+    return isParkingScreen(value) ? value : null
+  })
+  const [parkingParams, setParkingParams] = useState(() => {
+    const params = new URLSearchParams(location.search)
+    if (!isParkingScreen(params.get("module"))) return new URLSearchParams()
+    params.delete("module")
+    return params
+  })
+  const [parkingAccess, setParkingAccess] = useState<ParkingAccess>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("vparking:parking:demo-access") ?? "null") as ParkingAccess | null
+      if (saved && Object.prototype.hasOwnProperty.call(parkingRoles, saved.role) &&
+        (!saved.estate || estates.some((estate) => estate.id === saved.estate))) return saved
+    } catch { /* Use the default demo account. */ }
+    return demoAccess
+  })
+  const [parkingDirty, setParkingDirty] = useState(false)
   const [operation, setOperation] = useState<OperationScreen | null>(() => {
     const value = new URLSearchParams(location.search).get("module")
     return operationMenus.some((m) => m.id === value)
@@ -210,6 +239,7 @@ function App() {
   const [columns, setColumns] = useState(defaultColumns)
   const [columnDraft, setColumnDraft] = useState(defaultColumns)
   const [toast, setToast] = useState("")
+  const parkingModel = useParking(parkingAccess, setToast)
   const [notifications, setNotifications] = useState(false)
   const [help, setHelp] = useState(false)
   const [mobile, setMobile] = useState(false)
@@ -262,6 +292,12 @@ function App() {
     }
   }, [toast])
   useEffect(() => {
+    if (parking) {
+      const params = new URLSearchParams(parkingParams)
+      params.set("module", parking)
+      window.history.replaceState(null, "", `${window.location.pathname}?${params}`)
+      return
+    }
     const p = new URLSearchParams({ screen })
     if (operation) p.set("module", operation)
     for (const [key, value] of Object.entries(applied))
@@ -271,9 +307,9 @@ function App() {
     if (sortDesc || sortKey !== "id")
       p.set("sort", `${sortDesc ? "-" : ""}${sortKey}`)
     window.history.replaceState(null, "", `${window.location.pathname}?${p}`)
-  }, [screen, applied, query, page, sortKey, sortDesc, operation])
+  }, [screen, applied, query, page, sortKey, sortDesc, operation, parking, parkingParams])
   useEffect(() => {
-    const changed = editing && JSON.stringify(edit) !== originalEdit
+    const changed = parkingDirty || (editing && JSON.stringify(edit) !== originalEdit)
     function leave(e: BeforeUnloadEvent) {
       if (changed) {
         e.preventDefault()
@@ -282,7 +318,7 @@ function App() {
     }
     window.addEventListener("beforeunload", leave)
     return () => window.removeEventListener("beforeunload", leave)
-  }, [editing, edit, originalEdit])
+  }, [editing, edit, originalEdit, parkingDirty])
 
   const error =
     !draft.end || (screen === "stock" && !draft.start)
@@ -367,22 +403,26 @@ function App() {
       setMobile(false)
       return
     }
-    if (operationDirty && !force) {
+    if ((operationDirty || parkingDirty) && !force) {
       setLeaveTarget({ operation: id })
       return
     }
     setOperation(id)
+    setParking(null)
+    setParkingDirty(false)
     setMobile(false)
     setOperationFocus(null)
     setOperationDirty(false)
   }
   function navigate(id: Screen, force = false) {
     if (id === "circulation" || id === "alerts") id = "stock"
-    if (operationDirty && !force) {
+    if ((operationDirty || parkingDirty) && !force) {
       setLeaveTarget({ report: id })
       return
     }
     setOperation(null)
+    setParking(null)
+    setParkingDirty(false)
     setOperationDirty(false)
     setPreviewState("ready")
     setScreen(id)
@@ -396,6 +436,39 @@ function App() {
       setDraft((v) => ({ ...v, status: "", alert: "", expiry: "" }))
       setApplied((v) => ({ ...v, status: "", alert: "", expiry: "" }))
     }
+  }
+  function applyParkingParams(base: URLSearchParams, patch: Record<string, string | null>) {
+    const next = new URLSearchParams(base)
+    for (const [name, value] of Object.entries(patch)) {
+      if (value !== null) next.set(name, value)
+      else next.delete(name)
+    }
+    return next
+  }
+  function updateParking(patch: Record<string, string | null>) {
+    setParkingParams((params) => applyParkingParams(params, patch))
+  }
+  function chooseParking(id: ParkingScreen, patch?: Record<string, string | null>, preserve = false, force = false) {
+    if (parking === id && !patch) { setMobile(false); return }
+    if ((operationDirty || parkingDirty) && !force) {
+      setLeaveTarget({ parking: { screen: id, patch, preserve } })
+      return
+    }
+    setParkingParams((params) => applyParkingParams(preserve ? params : new URLSearchParams(), patch ?? {}))
+    setParking(id)
+    setOperation(null)
+    setOperationDirty(false)
+    setParkingDirty(false)
+    setMobile(false)
+    if (!preserve) window.scrollTo(0, 0)
+  }
+  function changeParkingAccess(access: ParkingAccess, force = false) {
+    if (parkingDirty && !force) { setLeaveTarget({ access }); return }
+    setParkingAccess(access)
+    setParkingDirty(false)
+    setAccount(false)
+    if (parking) setParkingParams(new URLSearchParams())
+    try { localStorage.setItem("vparking:parking:demo-access", JSON.stringify(access)) } catch {}
   }
   function runReport() {
     if (error) return
@@ -1968,6 +2041,20 @@ function App() {
         )
       })
   }
+  function renderParkingMenu(group: typeof parkingMenus[number]["group"]) {
+    const icons = {
+      "parking-report": FileBarChart2, "parking-alerts": TriangleAlert, "parking-trips": Search,
+      "parking-capacity": Warehouse, "parking-settings": Settings2,
+    }
+    return parkingMenus.filter((menu) => menu.group === group && canOpen(parkingAccess, menu.id)).map((menu) => {
+      const Icon = icons[menu.id]
+      const active = parking === menu.id
+      return <Button variant="ghost" className={`subnav-item ${active ? "active" : ""}`} key={menu.id}
+        aria-current={active ? "page" : undefined} onClick={() => chooseParking(menu.id)}>
+        <Icon size={15} /><span>{menu.title}</span>{active && <span className="active-dot" />}
+      </Button>
+    })
+  }
 
   return (
     <div className={`app ${collapsed ? "sidebar-collapsed" : ""}`}>
@@ -2059,6 +2146,13 @@ function App() {
               {renderOperationMenu("Quản lý thẻ")}
             </div>
           </div>
+          {canOpen(parkingAccess, "parking-alerts") && <div className="nav-section" role="group" aria-label="Quản lý chỗ đỗ">
+            <Button variant="ghost" className="nav-item nav-section-label" aria-label="Quản lý chỗ đỗ" title="Quản lý chỗ đỗ"
+              onClick={() => chooseParking("parking-alerts")}>
+              <ParkingSquare size={18} /><span>Quản lý chỗ đỗ</span><ChevronDown size={14} />
+            </Button>
+            <div className="subnav">{renderParkingMenu("Quản lý chỗ đỗ")}</div>
+          </div>}
           <div className="nav-section" role="group" aria-label="Báo cáo">
             <Button
               variant="ghost"
@@ -2082,10 +2176,10 @@ function App() {
                       variant="ghost"
                       onClick={() => navigate(s.id)}
                       className={`subnav-item ${
-                        !operation && reportSection === s.id ? "active" : ""
+                        !operation && !parking && reportSection === s.id ? "active" : ""
                       }`}
                       aria-current={
-                        !operation && reportSection === s.id
+                        !operation && !parking && reportSection === s.id
                           ? "page"
                           : undefined
                       }
@@ -2095,12 +2189,13 @@ function App() {
                       {s.id === "alerts" && (
                         <span className="nav-count">{warningCount}</span>
                       )}
-                      {!operation && reportSection === s.id && (
+                      {!operation && !parking && reportSection === s.id && (
                         <span className="active-dot" />
                       )}
                     </Button>
                   )
                 })}
+              {renderParkingMenu("Báo cáo")}
             </div>
           </div>
           <div role="group" aria-label="Cấu hình">
@@ -2118,16 +2213,17 @@ function App() {
             <Button
               variant="ghost"
               className={`subnav-item config-item ${
-                !operation && screen === "settings" ? "active" : ""
+                !operation && !parking && screen === "settings" ? "active" : ""
               }`}
               aria-current={
-                !operation && screen === "settings" ? "page" : undefined
+                !operation && !parking && screen === "settings" ? "page" : undefined
               }
               onClick={() => navigate("settings")}
             >
               <span className="small-nav-line" />
               <span>Tham số báo cáo thẻ xe</span>
             </Button>
+            <div className="subnav">{renderParkingMenu("Cấu hình")}</div>
           </div>
         </nav>
         <div className="sidebar-bottom">
@@ -2178,7 +2274,7 @@ function App() {
           <div className="topbar-right">
             <span className="today-label">
               <CalendarDays size={15} />
-              Thứ Năm, 29/10/2026
+              {parking ? date(vnToday()) : "Thứ Năm, 29/10/2026"}
             </span>
             <Button
               variant="ghost"
@@ -2203,6 +2299,29 @@ function App() {
               {notifications && (
                 <div className="popover notifications-popover">
                   <Heading level={3}>Thông báo</Heading>
+                  {parkingModel.notices.map((notice) => <div className="notification-entry" key={notice.id}>
+                    <span className="notification-icon amber"><TriangleAlert size={18} /></span>
+                    <div><strong>Vượt sức chứa · {siteById(notice.site)?.label}</strong>
+                      <span>{notice.vehicle} · {fmt(notice.count)} xe / {fmt(notice.design)} chỗ quy hoạch</span>
+                      <small>{displayTime(notice.at)}</small>
+                      <Button variant="link" onClick={() => {
+                        const filters = defaultParkingFilters(parkingModel.cutoff)
+                        const day = dayAt(notice.at)
+                        chooseParking("parking-alerts", {
+                          ...filters, site: notice.site, vehicle: notice.vehicle, tab: "0",
+                          start: day <= filters.end ? shiftDay(day, -6) : filters.start,
+                          end: day <= filters.end ? day : filters.end,
+                        })
+                        setNotifications(false)
+                      }}>Xem cảnh báo <ArrowRight size={12} /></Button>
+                    </div>
+                  </div>)}
+                  {parkingModel.exports.map((file) => <div className="notification-entry" key={file.id}>
+                    <span className="notification-icon"><FileSpreadsheet size={18} /></span>
+                    <div><strong>File Excel đã sẵn sàng</strong><span title={file.name}>{file.name}</span>
+                      <Button variant="link" onClick={() => parkingModel.downloadExport(file.id)}>Tải file <Download size={12} /></Button>
+                    </div>
+                  </div>)}
                   <div className="notification-entry">
                     <span className="notification-icon">
                       <FileSpreadsheet size={18} />
@@ -2247,21 +2366,26 @@ function App() {
               >
                 <span className="avatar">AL</span>
                 <span>
-                  Admin Local<small>Quản trị viên</small>
+                  {parkingRoles[parkingAccess.role]}<small>{parkingAccess.role === "admin" ? "Quản trị viên" : "Tài khoản minh họa"}</small>
                 </span>
                 <ChevronDown size={13} />
               </Button>
               {account && (
                 <div className="popover account-popover">
-                  <strong>Admin Local</strong>
-                  <span className="muted">Quyền quản trị · 3 khu đô thị</span>
+                  <strong>{parkingRoles[parkingAccess.role]}</strong>
                   <div className="account-access">
                     <ShieldCheck size={15} />
-                    Xem, xuất báo cáo và sửa tham số
+                    Phân quyền báo cáo chỗ đỗ
                   </div>
                   <div className="muted">
                     Phiên bản thiết kế · Dữ liệu minh họa
                   </div>
+                  <Field label="Vai trò minh họa"><Select value={parkingAccess.role}
+                    options={Object.entries(parkingRoles).map(([value, label]) => ({ value, label }))}
+                    onChange={(e) => changeParkingAccess({ role: e.target.value as Role, estate: parkingAccess.estate })} /></Field>
+                  <Field label="Phạm vi khu đô thị"><Select value={parkingAccess.estate}
+                    options={[{ value: "", label: "Tất cả khu đô thị" }, ...estates.map((estate) => ({ value: estate.id, label: estate.name }))]}
+                    onChange={(e) => changeParkingAccess({ ...parkingAccess, estate: e.target.value })} /></Field>
                 </div>
               )}
             </div>
@@ -2276,7 +2400,10 @@ function App() {
             onDirtyChange={setOperationDirty}
             onNotify={setToast}
           />
-          <div hidden={!!operation}>
+          {parking && <Parking key={`${parkingAccess.role}/${parkingAccess.estate}`} screen={parking} params={parkingParams}
+            access={parkingAccess} model={parkingModel} update={updateParking} navigate={chooseParking}
+            home={() => navigate("stock")} onDirty={setParkingDirty} notify={setToast} />}
+          <div hidden={!!operation || !!parking}>
             <div className="breadcrumbs">
               <span>{screen === "settings" ? "Cấu hình" : "Báo cáo"}</span>
               <ChevronRight size={12} />
@@ -3247,6 +3374,9 @@ function App() {
                   if (leaveTarget.report) navigate(leaveTarget.report, true)
                   else if (leaveTarget.operation)
                     chooseOperation(leaveTarget.operation, true)
+                  else if (leaveTarget.parking)
+                    chooseParking(leaveTarget.parking.screen, leaveTarget.parking.patch, leaveTarget.parking.preserve, true)
+                  else if (leaveTarget.access) changeParkingAccess(leaveTarget.access, true)
                   setLeaveTarget(null)
                 }}
               >

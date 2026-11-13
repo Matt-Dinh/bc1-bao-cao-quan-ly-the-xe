@@ -1,0 +1,132 @@
+.parking-heading { gap: 14px; flex-wrap: wrap; }
+.parking-actions, .parking-inline { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.parking-filter-panel { margin-bottom: 18px; padding: 15px 18px; }
+.parking-filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(134px, 1fr)); gap: 12px; }
+.parking-filter-extras { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 13px; }
+.parking-segments { display: inline-flex; flex-wrap: wrap; align-items: stretch; border: 1px solid var(--color-border); border-radius: 7px; overflow: hidden; }
+.parking-segments .button { font-size: 11px; border: 0; border-right: 1px solid var(--color-border); border-radius: 0; min-height: 30px; }
+.parking-segments .button:last-child { border-right: 0; }
+.parking-segments .button[aria-pressed="true"] { color: var(--color-brand); background: var(--color-brand-soft); font-weight: 650; }
+.parking-banner { display: flex; align-items: center; gap: 8px; padding: 11px 14px; margin-bottom: 14px; border: 1px solid #dce7f6; border-radius: 7px; background: #edf4fc; color: #425d80; font-size: 12px; }
+.parking-banner.warning { background: #fff5e6; border-color: #f3dfbe; color: #8a591c; }
+.parking-banner.error { background: #fff0f1; border-color: #f2d4d8; color: #a92436; }
+.parking-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.parking-kpis .summary-card { padding: 13px 13px 15px; }
+.parking-kpis .summary-top { min-height: 31px; align-items: flex-start; line-height: 1.5; font-weight: 550; }
+.parking-kpis .summary-icon { width: 26px; height: 26px; flex: none; color: #6781a3; }
+.parking-kpis .summary-value { margin: 4px 0 3px; font-size: clamp(18px, 2vw, 27px); white-space: nowrap; }
+.parking-kpis .summary-sub { white-space: normal; font-size: 10px; color: #707987; }
+.parking-kpi-warning .summary-value, .parking-kpi-warning .summary-icon { color: var(--color-brand); }
+.parking-kpi-warning .summary-icon { background: var(--color-brand-soft); }
+.parking-chart-layout { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(0, 1fr); align-items: stretch; gap: 17px; }
+.parking-chart { min-width: 0; display: flex; flex-direction: column; height: 100%; }
+.parking-chart-full { grid-column: 1 / -1; }
+.parking-chart-anchor, .parking-chart-full { min-width: 0; scroll-margin-top: 82px; }
+.parking-chart-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 17px 18px 7px; }
+.parking-chart-header h2, .parking-detail-panel h2 { font-size: 15px; }
+.parking-chart-header p, .parking-chart-note { color: #697483; font-size: 11px; line-height: 1.5; }
+.parking-chart-header p { margin-top: 5px; }
+.parking-chart-header .input { height: 30px; font-size: 11px; }
+.parking-chart-header .select-wrap > svg { top: 8px; }
+.parking-chart-body { padding: 9px 18px 4px; flex: 1; min-width: 0; }
+.parking-chart-note { margin: 5px 18px 12px; }
+.parking-chart-footer.button { width: 100%; justify-content: flex-start; border-radius: 0; border: 0; border-top: 1px solid #edf0f3; background: #f8f9fb; color: #47536a; padding: 9px 18px; }
+.parking-chart-footer.button:hover { background: #edf1f7; }
+.parking-chart-footer svg:last-child { margin-left: auto; }
+.parking-legend { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px 14px; color: #5f697b; font-size: 10px; margin: 12px 0; }
+.parking-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.parking-legend i { width: 9px; height: 9px; border-radius: 2px; }
+.parking-utilization { display: grid; gap: 9px; margin-top: 5px; max-height: 324px; overflow: auto; }
+.parking-util-row { display: grid; grid-template-columns: minmax(90px, 26%) minmax(0, 1fr); gap: 8px; align-items: center; }
+.parking-util-row > strong { font-size: 11px; line-height: 1.35; }
+.parking-util-tracks { display: grid; gap: 3px; position: relative; }
+.parking-util-tracks::before { content: ""; position: absolute; inset: 0 auto 0 var(--mark); border-left: 1px dashed #8f98a8; pointer-events: none; }
+.parking-util-tracks button { min-height: 16px; display: flex; align-items: center; gap: 6px; text-align: left; position: relative; }
+.parking-util-tracks button:hover i { filter: brightness(.89); }
+.parking-util-tracks i { display: block; height: 11px; max-width: calc(100% - 38px); border-radius: 3px; }
+.parking-util-tracks small, .parking-util-tracks b { color: #555f70; font-size: 10px; white-space: nowrap; font-weight: 550; }
+.parking-plot-scroll { overflow-x: auto; }
+.parking-plot { display: grid; grid-template-columns: 38px minmax(0, 1fr); margin: 7px 0 0; font-size: 10px; }
+.parking-axis { display: flex; flex-direction: column; justify-content: space-between; height: 158px; color: #768195; text-align: right; padding-right: 8px; }
+.parking-plot-content { position: relative; }
+.parking-plot-grid { height: 150px; margin-top: 4px; position: absolute; inset-inline: 0; border-bottom: 1px dashed #dce3ec; background: repeating-linear-gradient(to bottom, #dce3ec 0, #dce3ec 1px, transparent 1px, transparent 37.5px); }
+.parking-lines { width: 100%; height: 150px; top: 4px; position: absolute; z-index: 2; pointer-events: none; overflow: visible; }
+.parking-columns { display: grid; position: relative; padding-top: 4px; }
+.parking-columns > * { min-width: 0; text-align: center; font-size: 10px; color: #46536a; }
+.parking-columns > button:focus-visible { outline: 2px solid #6585c5; outline-offset: -2px; z-index: 3; }
+.parking-column-track { display: flex; align-items: flex-end; justify-content: center; gap: 3px; height: 150px; padding: 0 3px; }
+.parking-column-track.weekend { background: #e8ebf064; }
+.parking-column-track.holiday { background: #ffebd28a; }
+.parking-column-track.over { background: #f9dbe28f; }
+.parking-columns > button:hover .parking-column-track { background: #dce7f08f; }
+.parking-column-track i { position: relative; display: block; flex: 1; max-width: 36px; border-radius: 3px 3px 0 0; font-style: normal; }
+.parking-column-track b { position: absolute; left: 50%; bottom: calc(100% + 2px); transform: translateX(-50%); color: #293447; white-space: nowrap; font-size: 10px; }
+.parking-column-label { display: block; min-height: 21px; padding: 5px 1px 2px; line-height: 1.3; }
+.parking-columns small { display: block; color: #707989; line-height: 1.3; padding: 0 1px 4px; }
+.parking-flow-filters { display: grid; grid-template-columns: minmax(130px, 1.3fr) minmax(120px, 1fr); gap: 9px; margin-bottom: 13px; }
+.parking-flow-filters .input { font-size: 11px; height: 32px; }
+.parking-table-scroll { scrollbar-gutter: stable; }
+.parking-table th { position: sticky; top: 0; z-index: 1; background: #f4f6f9; color: #495365; font-weight: 600; }
+.parking-table td { color: #38445a; padding-top: 11px; padding-bottom: 11px; }
+.parking-table .parking-number { text-align: right; }
+.parking-table td:first-child, .parking-table th:first-child { padding-left: 18px; }
+.parking-table .mismatch-row td { background: #fff2f4; }
+.parking-link { cursor: pointer; color: #2860ac; font-weight: 550; text-decoration: underline; text-decoration-color: #2860ac55; text-underline-offset: 2px; text-align: left; }
+.parking-link:hover { text-decoration-color: currentColor; }
+.parking-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.parking-chips:empty { display: none; }
+.parking-chips > span, .parking-chips > .button { background: #f0f3f7; border-radius: 14px; padding: 4px 9px; color: #556274; font-size: 11px; min-height: 0; }
+.parking-list-chips { padding: 0 16px 10px; margin: 0; }
+.parking-indent { padding-left: 16px; }
+.parking-empty { display: flex; min-height: 108px; flex-wrap: wrap; align-items: center; justify-content: center; gap: 9px; padding: 20px; color: #6e798a; text-align: center; }
+.parking-forbidden { min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+.parking-forbidden > span { color: var(--color-brand); font-size: 22px; font-weight: 700; }
+.parking-forbidden h1 { font-size: 20px; }
+.parking-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 16px; }
+.parking-toolbar .search-box { max-width: 320px; min-width: 200px; }
+.parking-search { display: grid; gap: 4px; }
+.parking-tabs { display: flex; flex-wrap: wrap; gap: 3px 9px; padding: 0 14px; border-bottom: 1px solid var(--color-border); }
+.parking-tabs .button { padding: 10px 7px; min-height: 39px; border-radius: 0; border: 0; border-bottom: 2px solid transparent; }
+.parking-tabs .button[aria-selected="true"] { color: var(--color-brand); border-color: var(--color-brand); font-weight: 650; }
+.parking-pagination .select-wrap { width: 98px; }
+.parking-page-number { display: inline-grid; place-items: center; min-width: 25px; min-height: 25px; border: 1px solid var(--color-border); border-radius: 6px; }
+.parking-column-setting { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; min-height: 34px; border-bottom: 1px solid #edf0f4; }
+.parking-column-setting .button { min-height: 27px; padding: 4px 6px; }
+.parking-drawer-fields, .parking-form-grid { display: grid; gap: 15px; }
+.parking-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 7px; }
+.parking-detail-panel { margin-bottom: 15px; padding: 17px; }
+.parking-detail-panel > h2 { margin-bottom: 12px; }
+.parking-detail-panel .parking-toolbar { padding: 0 0 7px; }
+.parking-detail-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.parking-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 12px; }
+.parking-detail-grid dt { color: #788191; font-size: 11px; }
+.parking-detail-grid dd { color: #374152; margin-top: 4px; font-weight: 550; overflow-wrap: anywhere; }
+.parking-photo-placeholder, .parking-lane-photo { margin-top: 14px; max-height: 260px; border-radius: 7px; }
+.parking-photo-placeholder { background: #f5f7fa; padding: 17px; display: flex; justify-content: center; align-items: center; gap: 8px; color: #788191; }
+.parking-shift-fields { display: grid; grid-template-columns: 2fr 1fr 1fr auto; align-items: end; gap: 10px; margin: 10px 0; }
+.parking-form-footer { justify-content: flex-end; padding: 7px 0; }
+.parking-history-entry { display: grid; gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--color-border); }
+.parking-history-entry > span { font-size: 11px; color: #778091; }
+.parking-truncate { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.parking-upload { padding-bottom: 9px; }
+.parking-upload .field { flex: 1; }
+.account-popover > .field { width: 100%; margin-top: 6px; }
+.parking-module .dialog-wide { width: min(1340px, 100%); }
+.parking-module .dialog-wide .parking-table-scroll { max-height: 58vh; }
+.parking-module .dialog-wide .parking-table th { border-top: 0; }
+.parking-module .dialog-wide .parking-table .parking-total td { background: #f6f8fc; font-weight: 650; position: sticky; top: 38px; z-index: 1; }
+.parking-module .dialog-wide .parking-table th { z-index: 2; }
+
+@media (max-width: 1200px) {
+  .parking-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 940px) {
+  .parking-chart-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .parking-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .parking-detail-pair, .parking-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .parking-filter-panel { padding: 11px; }
+  .parking-chart-header, .parking-chart-body { padding-left: 11px; padding-right: 11px; }
+  .parking-shift-fields { grid-template-columns: 1fr 1fr; }
+}
