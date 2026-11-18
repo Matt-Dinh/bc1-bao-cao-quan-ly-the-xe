@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
 import type { ReactNode } from "react"
-import { ChevronLeft, ChevronRight, Download, Search } from "lucide-react"
-import { Button, Field, Heading, Input, Select } from "./ui"
+import { ChartNoAxesCombined, ChevronLeft, ChevronRight, Download, ListFilter, LoaderCircle, Search } from "lucide-react"
+import { Button, Field, Form, Heading, Input, Select } from "./ui"
+import ReportPeriodFields from "./ReportPeriodFields"
 import { date, estates, fmt } from "./data"
-import { allowedSites, parkingVehicles, shiftDay } from "./parking-model"
+import { allowedSites, defaultParkingFilters, parkingVehicles, periodError, shiftDay } from "./parking-model"
 import type { ParkingAccess, ParkingFilters } from "./parking-model"
 
 export const numberText = (value: number | null | undefined, digits = 0) =>
@@ -81,32 +82,75 @@ export function ParkingFiltersBar({
   access,
   error,
   change,
-  children,
-  segmented = false,
+  lookup,
+  report = false,
+  loading = false,
 }: {
   filters: ParkingFilters
   cutoff: string
   access: ParkingAccess
   error: string
   change: UpdateParams
-  children?: ReactNode
-  segmented?: boolean
+  lookup?: {
+    params: URLSearchParams
+    fields: (params: URLSearchParams, change: UpdateParams) => ReactNode
+    error: (params: URLSearchParams, filters: ParkingFilters) => string
+  }
+  report?: boolean
+  loading?: boolean
 }) {
-  const sites = allowedSites(access).filter(
-    (site) => !filters.estate || site.estate === filters.estate,
-  )
+  const [draft, setDraft] = useState(filters)
+  useEffect(() => setDraft(filters), [filters])
+  const query = lookup?.params.toString() ?? ""
+  const [lookupDraft, setLookupDraft] = useState(() => new URLSearchParams(query))
+  useEffect(() => setLookupDraft(new URLSearchParams(query)), [query])
+  const manual = report || !!lookup
+  const visible = manual ? draft : filters
+  const datesError = manual ? periodError(draft, cutoff) : error
+  const lookupError = lookup && !datesError ? lookup.error(lookupDraft, draft) : ""
+  const pending = manual && (parkingFilterKeys.some((key) => draft[key] !== filters[key]) || lookupDraft.toString() !== query)
+  const update = (patch: Partial<ParkingFilters>) => {
+    if (manual) setDraft((current) => ({ ...current, ...patch }))
+    else change(patch)
+  }
+  const updateLookup: UpdateParams = (patch) => setLookupDraft((current) => {
+    const next = new URLSearchParams(current)
+    for (const [key, value] of Object.entries(patch)) {
+      if (value) next.set(key, value)
+      else next.delete(key)
+    }
+    return next
+  })
+  function submit() {
+    if (!manual || datesError || lookupError || loading) return
+    const keys = [...new Set([...(lookup?.params.keys() ?? []), ...lookupDraft.keys()])]
+    change({ ...draft, ...Object.fromEntries(keys.map((key) => [key, lookupDraft.get(key)])) })
+  }
+  const sites = allowedSites(access).filter((site) => !visible.estate || site.estate === visible.estate)
   const estateOptions = estates.filter((estate) =>
     allowedSites(access).some((site) => site.estate === estate.id),
   )
   return (
-    <div className="panel parking-filter-panel">
-      <div className="parking-filter-grid">
+    <Form className="panel filter-panel parking-filter-panel" onSubmit={(event) => { event.preventDefault(); submit() }}>
+      <div className="filter-heading">
+        <span>
+          <ListFilter size={16} /><strong>{report ? "Điều kiện báo cáo" : "Bộ lọc"}</strong>
+          {pending && <span className="filter-pending">Chưa áp dụng</span>}
+        </span>
+        {report && <Button variant="ghost" onClick={() => setDraft(defaultParkingFilters(cutoff))}>Đặt lại</Button>}
+        {lookup && <Button variant="ghost" onClick={() => {
+          setDraft({ ...defaultParkingFilters(cutoff), start: draft.start, end: draft.end })
+          setLookupDraft(new URLSearchParams())
+        }}>Xóa bộ lọc</Button>}
+      </div>
+      <div className="filter-grid">
         <Field label="Khu đô thị">
           <Select
-            value={filters.estate}
-            onChange={(e) => change({ estate: e.target.value, site: "" })}
+            aria-label="Khu đô thị"
+            value={visible.estate}
+            onChange={(e) => update({ estate: e.target.value, site: "" })}
             options={[
-              allOption(`Tất cả (${estateOptions.length})`),
+              allOption("Tất cả khu đô thị"),
               ...estateOptions.map((estate) => ({
                 value: estate.id,
                 label: estate.name,
@@ -116,15 +160,41 @@ export function ParkingFiltersBar({
         </Field>
         <Field label="Bãi xe">
           <Select
-            value={filters.site}
-            onChange={(e) => change({ site: e.target.value })}
+            aria-label="Bãi xe"
+            value={visible.site}
+            onChange={(e) => update({ site: e.target.value })}
             options={[
-              allOption(`Tất cả (${sites.length})`),
+              allOption("Tất cả bãi xe"),
               ...sites.map((site) => ({ value: site.id, label: site.label })),
             ]}
           />
         </Field>
-        <Field label="Từ ngày" error={error || undefined}>
+        {report ? (
+          <div className="field parking-vehicle-options" role="group" aria-label="Phương tiện">
+            <span className="field-label">Phương tiện</span>
+            <Segments options={[...parkingVehicles]} value={visible.vehicle}
+              change={(vehicle) => update({ vehicle: vehicle as ParkingFilters["vehicle"] })} />
+          </div>
+        ) : (
+          <Field label="Phương tiện">
+            <Select aria-label="Phương tiện" value={visible.vehicle} options={[...parkingVehicles]}
+              onChange={(e) => update({ vehicle: e.target.value as ParkingFilters["vehicle"] })} />
+          </Field>
+        )}
+      </div>
+      {lookup?.fields(lookupDraft, updateLookup)}
+      {manual ? (
+        <div className="filter-second-row">
+          <ReportPeriodFields period={draft} max={cutoff} error={datesError} onChange={update} />
+          <div className="run-report">
+            <Button type="submit" variant="primary" disabled={!!(datesError || lookupError) || loading}>
+              {loading ? <LoaderCircle size={16} className="spin" /> : report ? <ChartNoAxesCombined size={16} /> : <Search size={16} />}
+              {report ? "Xem báo cáo" : "Áp dụng"}
+            </Button>
+          </div>
+        </div>
+      ) : <div className="filter-grid parking-lookup-grid">
+        <Field label="Từ ngày" required error={datesError || undefined}>
           <Input
             aria-label="Từ ngày"
             type="date"
@@ -133,7 +203,7 @@ export function ParkingFiltersBar({
             onChange={(e) => change({ start: e.target.value })}
           />
         </Field>
-        <Field label="Đến ngày">
+        <Field label="Đến ngày" required>
           <Input
             aria-label="Đến ngày"
             type="date"
@@ -144,6 +214,7 @@ export function ParkingFiltersBar({
         </Field>
         <Field label="Chọn nhanh">
           <Select
+            aria-label="Chọn nhanh"
             value=""
             onChange={(e) => {
               if (e.target.value)
@@ -159,32 +230,9 @@ export function ParkingFiltersBar({
             ]}
           />
         </Field>
-        {!segmented && (
-          <Field label="Loại xe">
-            <Select
-              value={filters.vehicle}
-              options={[...parkingVehicles]}
-              onChange={(e) => change({ vehicle: e.target.value })}
-            />
-          </Field>
-        )}
-      </div>
-      {(segmented || children) && (
-        <div className="parking-filter-extras">
-          {segmented && (
-            <div className="parking-inline">
-              <span className="field-label">Loại xe</span>
-              <Segments
-                options={[...parkingVehicles]}
-                value={filters.vehicle}
-                change={(vehicle) => change({ vehicle })}
-              />
-            </div>
-          )}
-          {children}
-        </div>
-      )}
-    </div>
+      </div>}
+      {lookupError && <p className="lookup-filter-error" role="alert">{lookupError}</p>}
+    </Form>
   )
 }
 export function Segments({

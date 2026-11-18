@@ -34,8 +34,8 @@ export function tripExport(
   settings: ParkingSettings,
   days: string[],
   night?: string,
+  end = dayStart(filters.end) + dayMinutes,
 ) {
-  const end = dayStart(filters.end) + dayMinutes
   const site = siteById(trip.site)
   const closed = statusAt(trip, end) === "Đã ra"
   return {

@@ -39,7 +39,7 @@ export function Input(
     return (
       <div className={`input date-input ${props.className || ""}`}>
         <span aria-hidden="true">
-          {value ? value.split("-").reverse().join("/") : "dd/mm/yyyy"}
+          {value ? value.split("-").reverse().join("/") : props.placeholder || "dd/mm/yyyy"}
         </span>
         {createElement("input", {
           ...props,

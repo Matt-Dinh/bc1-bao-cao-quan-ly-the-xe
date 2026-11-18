@@ -21,6 +21,10 @@ export const alertTabs = [
   "Ra không thu đủ",
   "Bất thường tại làn",
 ]
+export const overCapacityTripAlert = {
+  value: "exceeded",
+  label: "Xe có mặt khi bãi vượt sức chứa",
+}
 export const laneIssues = [
   "Vào lại khi lượt trước chưa ra",
   "Ra không có lượt vào",
@@ -772,7 +776,21 @@ export function tripAlerts(
   ].filter(Boolean)
 }
 
-export type DrillMetric = "incoming" | "outgoing" | "opening" | "closing" | "parked" | "nightly" | "unusual" | "duration" | "issue" | "deficit"
+export const tripLookupModes = {
+  incoming: "Xe vào",
+  outgoing: "Xe ra",
+  opening: "Tồn đầu kỳ",
+  closing: "Xe trong bãi",
+  parked: "Lượt tính lấp đầy",
+  planned: "Lượt tính đạt kế hoạch",
+  nightly: "Lượt qua đêm",
+  unusual: "Tồn bất thường",
+  duration: "Theo thời gian đỗ",
+  issue: "Bất thường tại làn",
+  deficit: "Ra không thu đủ",
+  exceeded: "Vượt sức chứa",
+} as const
+export type DrillMetric = keyof typeof tripLookupModes
 export interface TripDrill {
   metric: DrillMetric
   label: string
@@ -780,14 +798,37 @@ export interface TripDrill {
   end: number
   sites?: string[]
   days?: string[]
+  dayKind?: typeof dayTypes[number]
   group?: string
   bucket?: number
 }
+
+export function exceededHoursBySite(rows: SiteDay[], days?: string[]) {
+  const hoursBySite = new Map<string, number[]>()
+  for (const row of rows) {
+    if (days && !days.includes(row.day)) continue
+    const hours = hoursBySite.get(row.site) ?? []
+    for (const hour of row.hours) {
+      if (hour.exceeded) hours.push(hour.end)
+    }
+    hoursBySite.set(row.site, hours)
+  }
+  return hoursBySite
+}
+
+export function parkedDuringExceededHour(trip: Trip, hoursBySite: Map<string, number[]>) {
+  return hoursBySite.get(trip.site)?.some((end) => parkedAt(trip, end)) ?? false
+}
+
 export function drillTrips(
   trips: Trip[],
   drill: TripDrill,
   settings: ParkingSettings,
+  exceeded: SiteDay[] = [],
 ) {
+  const overBySite = drill.metric === "exceeded"
+    ? exceededHoursBySite(exceeded, drill.days)
+    : new Map<string, number[]>()
   return trips.flatMap((trip): { trip: Trip; night?: string }[] => {
     if (drill.sites && !drill.sites.includes(trip.site)) return []
     if (drill.group && trip.group !== drill.group) return []
@@ -809,10 +850,14 @@ export function drillTrips(
       case "closing":
         matches = parkedAt(trip, drill.end)
         break
-      case "parked": {
+      case "parked":
+      case "planned": {
         const relevantDays =
           days ?? daysIn(dayAt(drill.start), dayAt(drill.end - 1))
         matches = relevantDays.some((day) => {
+          if (drill.metric === "planned" && !effectiveRecord(
+            settings.plans, `${trip.site}/${trip.vehicle}/${day.slice(0, 7)}`, day,
+          )) return false
           const schedule = effectiveRecord(settings.schedules, trip.site, day)
           const previous = effectiveRecord(
             settings.schedules,
@@ -853,7 +898,86 @@ export function drillTrips(
       case "deficit":
         matches = included(trip.exited) && deficit(trip) > 0
         break
+      case "exceeded":
+        matches = parkedDuringExceededHour(trip, overBySite)
+        break
     }
     return matches ? [{ trip }] : []
   })
+}
+
+export const tripLookupKeys = ["tripMode", "hourStart", "hourEnd", "dayKind", "durationGroup"] as const
+export const clearTripLookup = { tripMode: null, hourStart: null, hourEnd: null, dayKind: null, durationGroup: null }
+export const tripLookupMode = (params: URLSearchParams): DrillMetric | null => {
+  const mode = params.get("tripMode")
+  return mode && Object.prototype.hasOwnProperty.call(tripLookupModes, mode) ? mode as DrillMetric : null
+}
+export const hasLookupHours = (mode: DrillMetric | null) =>
+  mode === "incoming" || mode === "outgoing" || mode === "opening" || mode === "closing" || mode === "duration"
+
+const lookupAlerts: Partial<Record<DrillMetric, string>> = {
+  unusual: alertTabs[1],
+  deficit: alertTabs[2],
+  issue: alertTabs[3],
+  exceeded: overCapacityTripAlert.value,
+}
+
+export function tripLookupPatch(value: TripDrill, filters: ParkingFilters, settings: ParkingSettings) {
+  const locations = value.sites?.flatMap((id) => {
+    const site = siteById(id)
+    return site ? [site] : []
+  }) ?? []
+  const site = locations.length === 1 ? locations[0].id : filters.site
+  const estate = locations.length && locations.every((item) => item.estate === locations[0].estate)
+    ? locations[0].estate
+    : filters.estate
+  const end = dayAt(value.end - 1 / 60)
+  const start = value.metric === "closing" ? end : dayAt(value.start)
+  const dayKind = value.dayKind ?? (value.days?.length && value.days.length < daysIn(start, end).length
+    ? dayType(value.days[0], settings.holidays)
+    : null)
+  const alert = !dayKind ? lookupAlerts[value.metric] ?? null : null
+  const state = value.metric === "closing" && value.end % dayMinutes === 0 && !dayKind
+    ? "Đang trong bãi" : null
+  const tripMode = alert || state ? null : value.metric === "duration" ? "outgoing" : value.metric
+  return {
+    estate, site, vehicle: filters.vehicle, start, end,
+    tripMode, alert, state,
+    hourStart: hasLookupHours(tripMode) && tripMode !== "closing" && value.start % dayMinutes
+      ? clockTime(value.start) : null,
+    hourEnd: hasLookupHours(tripMode) && tripMode !== "opening" && value.end % dayMinutes
+      ? clockTime(value.end) : null,
+    dayKind,
+    durationGroup: value.bucket === undefined ? null : String(value.bucket),
+    group: value.group || null,
+  }
+}
+
+const lookupHour = (value: string | null) => value && /^([01]\d|2[0-3]):[0-5]\d$/.test(value)
+  ? timeMinutes(value) : null
+
+export function tripLookupWindow(params: URLSearchParams, filters: ParkingFilters) {
+  const mode = tripLookupMode(params)
+  const startDay = filters.start < goLive ? goLive : filters.start
+  const from = hasLookupHours(mode) && mode !== "closing" ? lookupHour(params.get("hourStart")) : null
+  const to = hasLookupHours(mode) && mode !== "opening" ? lookupHour(params.get("hourEnd")) : null
+  const start = dayStart(startDay) + (from ?? 0)
+  const end = dayStart(filters.end) + (to ?? dayMinutes)
+  return { start, end }
+}
+
+export function tripLookupDrill(params: URLSearchParams, filters: ParkingFilters, data: ParkingReportData): TripDrill | null {
+  const mode = tripLookupMode(params)
+  if (!mode) return null
+  const { start, end } = tripLookupWindow(params, filters)
+  const dayKind = dayTypes.find((label) => label === params.get("dayKind"))
+  const selectedBucket = Number(params.get("durationGroup"))
+  const bucket = Number.isInteger(selectedBucket) && selectedBucket >= 1 && selectedBucket <= durationGroups.length
+    ? selectedBucket : undefined
+  const metric = mode === "outgoing" && bucket !== undefined ? "duration" : mode
+  return {
+    metric, label: tripLookupModes[metric], start, end,
+    days: dayKind ? data.daily.filter((row) => row.type === dayKind).map((row) => row.day) : undefined,
+    bucket: metric === "duration" ? bucket : undefined,
+  }
 }

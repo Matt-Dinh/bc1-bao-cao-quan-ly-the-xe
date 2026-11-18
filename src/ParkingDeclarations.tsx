@@ -1105,18 +1105,18 @@ export default function ParkingDeclarations({
             <Field label="Trạng thái">
               <Select
                 value={status}
-                options={[allOption("Tất cả"), ...statuses]}
+                options={[allOption("Tất cả trạng thái"), ...statuses]}
                 onChange={(e) =>
                   update({ configStatus: e.target.value, page: null })
                 }
               />
             </Field>
             {importKind && (
-              <Field label="Loại xe">
+              <Field label="Phương tiện">
                 <Select
                   value={vehicle}
                   options={[
-                    allOption("Tất cả"),
+                    allOption("Tất cả phương tiện"),
                     ...parkingVehicles.slice(0, 3),
                   ]}
                   onChange={(e) =>

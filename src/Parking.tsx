@@ -24,6 +24,7 @@ import {
   shiftDay,
   siteById,
   touches,
+  tripLookupPatch,
   vnNow,
   vnToday,
 } from "./parking-model"
@@ -39,6 +40,9 @@ import {
   ParkingAlerts,
   ParkingTripDetail,
   ParkingTripList,
+  readTripLookupParams,
+  TripLookupFields,
+  tripLookupFilterError,
   parseDrill,
 } from "./ParkingTrips"
 import {
@@ -122,10 +126,18 @@ export default function Parking({
     (!!trip && !scope.some((site) => site.id === trip.site)) ||
     (!!params.get("configEstate") &&
       !scope.some((site) => site.estate === params.get("configEstate")))
-  const error = periodError(filters, cutoff)
+  const dateError = periodError(filters, cutoff)
+  const lookupError = screen === "parking-trips" && !dateError ? tripLookupFilterError(params, filters) : ""
+  const error = dateError || lookupError
+  const legacyDrill = screen === "parking-trips" ? params.get("drill") : null
+  useEffect(() => {
+    const previous = parseDrill(legacyDrill)
+    if (previous) update({ ...tripLookupPatch(previous, filters, settings), drill: null, page: null })
+  }, [legacyDrill])
   const configuration =
     screen === "parking-capacity" || screen === "parking-settings"
   const [attempt, setAttempt] = useState(0)
+  const [tripHeadingActions, setTripHeadingActions] = useState<HTMLDivElement | null>(null)
   const [calculation, setCalculation] = useState<{
     key: string
     data: ReturnType<typeof buildParkingReport> | null
@@ -223,17 +235,13 @@ export default function Parking({
     navigate(from, { trip: null, detailFrom: null }, true)
   }
   const drill = (value: TripDrill) => {
+    if (!canOpen(access, "parking-trips")) return
     const origin = new URLSearchParams(params)
     origin.delete("module")
     navigate("parking-trips", {
-      drill: JSON.stringify(value),
+      ...tripLookupPatch(value, filters, settings),
       origin: `?${origin}`,
       originScreen: screen,
-      estate: filters.estate,
-      site: filters.site,
-      vehicle: filters.vehicle,
-      start: filters.start,
-      end: filters.end,
     })
     window.scrollTo(0, 0)
   }
@@ -402,12 +410,12 @@ export default function Parking({
         actions={
           <>
             {screen === "parking-trips" &&
-              parseDrill(params.get("drill")) &&
               params.has("origin") && (
                 <Button onClick={backToOrigin}>
                   <ArrowLeft size={15} /> Quay lại số liệu
                 </Button>
               )}
+            {screen === "parking-trips" && <div className="op-heading-actions trip-heading-actions" ref={setTripHeadingActions} />}
             {screen === "parking-report" &&
               data &&
               data.days.length > 0 &&
@@ -423,12 +431,22 @@ export default function Parking({
         </div>
       )}
       <ParkingFiltersBar
+        key={screen}
         filters={filters}
         cutoff={cutoff}
-        error={error}
+        error={dateError}
         access={access}
-        change={changeFilters}
-        segmented={screen === "parking-report"}
+        change={screen === "parking-report" ? (patch) => {
+          changeFilters(patch)
+          setAttempt((value) => value + 1)
+        } : changeFilters}
+        lookup={screen === "parking-trips" ? {
+          params: readTripLookupParams(params),
+          fields: (draftParams, updateDraft) => <TripLookupFields params={draftParams} update={updateDraft} data={data} />,
+          error: tripLookupFilterError,
+        } : undefined}
+        report={screen === "parking-report"}
+        loading={!error && !data && !loadError}
       />
       {mismatches || sourceErrors > 0 ? (
         <div className="parking-banner error">
@@ -468,9 +486,6 @@ export default function Parking({
               drill={drill}
               resetFilters={resetFilters}
               showCapacity={() => navigate("parking-capacity")}
-              showAlerts={() =>
-                navigate("parking-alerts", { ...filters, tab: "0" })
-              }
             />
           )}
           {screen === "parking-alerts" && (
@@ -499,6 +514,7 @@ export default function Parking({
               exportFile={exportFile}
               changes={changes}
               openTrip={openTrip}
+              headingActions={tripHeadingActions}
             />
           )}
         </>

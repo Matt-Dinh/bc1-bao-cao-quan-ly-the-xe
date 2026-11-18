@@ -82,11 +82,12 @@ import {
 import type { Card, Filters, Screen, Threshold } from "./data"
 import Operations from "./Operations"
 import ReportDashboard from "./ReportDashboard"
+import ReportPeriodFields from "./ReportPeriodFields"
 import Parking from "./Parking"
 import useParking from "./useParking"
 import {
   canOpen, dayAt, defaultParkingFilters, demoAccess, displayTime, isParkingScreen,
-  parkingMenus, parkingRoles, shiftDay, siteById, vnToday,
+  overCapacityTripAlert, parkingMenus, parkingRoles, siteById, vnToday,
 } from "./parking-model"
 import type { ParkingAccess, ParkingScreen, Role } from "./parking-model"
 import { operationMenus, seedOperations } from "./operations-model"
@@ -1921,7 +1922,7 @@ function App() {
       "parking-report": FileBarChart2, "parking-alerts": TriangleAlert, "parking-trips": Search,
       "parking-capacity": Warehouse, "parking-settings": Settings2,
     }
-    return parkingMenus.filter((menu) => menu.group === group && canOpen(parkingAccess, menu.id)).map((menu) => {
+    return parkingMenus.filter((menu) => menu.id !== "parking-alerts" && menu.group === group && canOpen(parkingAccess, menu.id)).map((menu) => {
       const Icon = icons[menu.id]
       const active = parking === menu.id
       return <Button variant="ghost" className={`subnav-item ${active ? "active" : ""}`} key={menu.id}
@@ -2021,9 +2022,9 @@ function App() {
               {renderOperationMenu("Quản lý thẻ")}
             </div>
           </div>
-          {canOpen(parkingAccess, "parking-alerts") && <div className="nav-section" role="group" aria-label="Quản lý chỗ đỗ">
+          {parkingMenus.some((menu) => menu.group === "Quản lý chỗ đỗ" && canOpen(parkingAccess, menu.id)) && <div className="nav-section" role="group" aria-label="Quản lý chỗ đỗ">
             <Button variant="ghost" className="nav-item nav-section-label" aria-label="Quản lý chỗ đỗ" title="Quản lý chỗ đỗ"
-              onClick={() => chooseParking("parking-alerts")}>
+              onClick={() => chooseParking("parking-trips")}>
               <ParkingSquare size={18} /><span>Quản lý chỗ đỗ</span><ChevronDown size={14} />
             </Button>
             <div className="subnav">{renderParkingMenu("Quản lý chỗ đỗ")}</div>
@@ -2182,13 +2183,16 @@ function App() {
                       <Button variant="link" onClick={() => {
                         const filters = defaultParkingFilters(parkingModel.cutoff)
                         const day = dayAt(notice.at)
-                        chooseParking("parking-alerts", {
-                          ...filters, site: notice.site, vehicle: notice.vehicle, tab: "0",
-                          start: day <= filters.end ? shiftDay(day, -6) : filters.start,
-                          end: day <= filters.end ? day : filters.end,
+                        chooseParking("parking-trips", {
+                          ...filters,
+                          estate: siteById(notice.site)?.estate ?? "",
+                          site: notice.site,
+                          vehicle: notice.vehicle,
+                          alert: overCapacityTripAlert.value,
+                          ...(day <= filters.end ? { start: day, end: day } : {}),
                         })
                         setNotifications(false)
-                      }}>Xem cảnh báo <ArrowRight size={12} /></Button>
+                      }}>{dayAt(notice.at) <= parkingModel.cutoff ? "Xem lượt xe" : "Xem lượt xe kỳ gần nhất"} <ArrowRight size={12} /></Button>
                     </div>
                   </div>)}
                   {parkingModel.exports.map((file) => <div className="notification-entry" key={file.id}>
@@ -2379,36 +2383,12 @@ function App() {
                   </div>
                   <div className="filter-grid">{renderFilterFields()}</div>
                   <div className="filter-second-row">
-                    <div className="date-field">
-                      <Field
-                        label={screen === "stock" ? "Kỳ báo cáo" : "Ngày chốt"}
-                        required
-                        error={error}
-                      >
-                        {screen === "stock" ? (
-                          <div className="date-range">
-                            <CalendarDays size={15} />
-                            <Input
-                              type="date"
-                              aria-label="Từ ngày"
-                              min="2026-09-01"
-                              max={maxDate}
-                              value={draft.start}
-                              onChange={(e) => update("start", e.target.value)}
-                            />
-                            <span className="date-arrow">
-                              <ArrowRight size={14} />
-                            </span>
-                            <Input
-                              type="date"
-                              aria-label="Đến ngày"
-                              min="2026-09-01"
-                              max={maxDate}
-                              value={draft.end}
-                              onChange={(e) => update("end", e.target.value)}
-                            />
-                          </div>
-                        ) : (
+                    {screen === "stock" ? (
+                      <ReportPeriodFields period={draft} min="2026-09-01" max={maxDate} error={error}
+                        onChange={(period) => setDraft((current) => ({ ...current, ...period }))} />
+                    ) : (
+                      <div className="date-field">
+                        <Field label="Ngày chốt" required error={error}>
                           <Input
                             type="date"
                             aria-label="Ngày chốt"
@@ -2417,50 +2397,7 @@ function App() {
                             value={draft.end}
                             onChange={(e) => update("end", e.target.value)}
                           />
-                        )}
-                      </Field>
-                    </div>
-                    {screen === "stock" && (
-                      <div className="quick-dates">
-                        <Button
-                          variant="ghost"
-                          className={
-                            draft.start === defaults.start &&
-                            draft.end === defaults.end
-                              ? "quick-selected"
-                              : ""
-                          }
-                          onClick={() => {
-                            update("start", defaults.start)
-                            update("end", defaults.end)
-                          }}
-                        >
-                          Tháng này
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          className={
-                            draft.start === "2026-09-01" ? "quick-selected" : ""
-                          }
-                          onClick={() => {
-                            update("start", "2026-09-01")
-                            update("end", "2026-09-30")
-                          }}
-                        >
-                          Tháng trước
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          className={
-                            draft.start === "2026-10-22" ? "quick-selected" : ""
-                          }
-                          onClick={() => {
-                            update("start", "2026-10-22")
-                            update("end", maxDate)
-                          }}
-                        >
-                          7 ngày trước
-                        </Button>
+                        </Field>
                       </div>
                     )}
                     <div className="run-report">

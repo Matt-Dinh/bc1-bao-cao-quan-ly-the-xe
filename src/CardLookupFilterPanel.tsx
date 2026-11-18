@@ -1,9 +1,39 @@
 import { useState } from "react"
-import { ArrowLeft, ChevronDown, ListFilter, Search, X } from "lucide-react"
+import { ArrowLeft, ListFilter, Search, X } from "lucide-react"
 import { alertNames, cardAlertIds, cardTypes, estates, maxDate, vehicles } from "./data"
-import { circulationGroups, defaultCardLookupFilters, lookupDateError, lookupStatuses, movementKinds, stockMetricLabels } from "./report-model"
+import ReportPeriodFields from "./ReportPeriodFields"
+import {
+  circulationGroups,
+  defaultCardLookupFilters,
+  lookupDateError,
+  lookupStatuses,
+  movementKinds,
+  stockMetricLabels,
+} from "./report-model"
 import type { CardLookupFilters } from "./report-model"
 import { Button, Field, Form, Input, Select } from "./ui"
+
+const firstReportDate = "2026-09-01"
+const scopeKeys = ["keyword", "estate", "park", "type", "vehicle"] as const
+type Scope = Pick<CardLookupFilters, typeof scopeKeys[number]>
+const filterScope = ({ keyword, estate, park, type, vehicle }: CardLookupFilters): Scope =>
+  ({ keyword, estate, park, type, vehicle })
+
+function selectFilter<T extends string>(
+  label: string,
+  value: T,
+  onChange: (value: T) => void,
+  placeholder: string,
+  options: readonly T[],
+) {
+  return (
+    <Field label={label}>
+      <Select aria-label={label} value={value}
+        onChange={(event) => onChange(event.target.value as T)}
+        options={[{ value: "", label: placeholder }, ...options]} />
+    </Field>
+  )
+}
 
 export default function CardLookupFilterPanel({
   filters,
@@ -14,69 +44,60 @@ export default function CardLookupFilterPanel({
   onApply: (filters: CardLookupFilters) => void
   onBack?: () => void
 }) {
-  const [draft, setDraft] = useState(filters)
-  const [showMore, setShowMore] = useState(false)
+  const [movements, setMovements] = useState(filters.mode === "movement")
+  const [scope, setScope] = useState(() => filterScope(filters))
+  const [cardView, setCardView] = useState({
+    day: filters.mode === "snapshot" ? filters.end : "",
+    status: filters.status,
+    group: filters.group,
+    alert: filters.alert,
+  })
+  const [movementView, setMovementView] = useState(() => {
+    const initial = filters.mode === "movement" ? filters : defaultCardLookupFilters
+    return { start: initial.start, end: initial.end, movement: initial.movement }
+  })
+
+  function buildFilters(showMovements: boolean): CardLookupFilters {
+    const common = { ...defaultCardLookupFilters, ...scope }
+    if (showMovements) return { ...common, ...movementView, mode: "movement" }
+    return {
+      ...common,
+      mode: cardView.day ? "snapshot" : "current",
+      end: cardView.day || common.end,
+      status: cardView.status,
+      group: cardView.group,
+      alert: cardView.day ? cardView.alert : "",
+    }
+  }
+
+  const draft = buildFilters(movements)
   const error = lookupDateError(draft)
-  const pending = JSON.stringify(draft) !== JSON.stringify(filters)
-  const movements = draft.mode === "movement"
-  const snapshot = draft.mode === "snapshot"
-  const parks = [...new Set(estates.filter((estate) => !draft.estate || estate.id === draft.estate)
+  const viewKeys = movements ? ["start", "end", "movement"] as const : ["end", "status", "group", "alert"] as const
+  const pending = draft.mode !== filters.mode || [...scopeKeys, ...viewKeys].some((key) => draft[key] !== filters[key])
+  const parks = [...new Set(estates.filter((estate) => !scope.estate || estate.id === scope.estate)
     .flatMap((estate) => estate.parks))]
 
-  function update<K extends keyof CardLookupFilters>(key: K, value: CardLookupFilters[K]) {
-    setDraft((current) => ({ ...current, [key]: value, ...(key === "estate" ? { park: "" } : {}) }))
+  function changeView(showMovements: boolean) {
+    if (showMovements === movements) return
+    setMovements(showMovements)
+    const next = buildFilters(showMovements)
+    if (!lookupDateError(next)) onApply(next)
   }
 
   function clear() {
-    const next: CardLookupFilters = {
-      ...defaultCardLookupFilters,
-      mode: filters.mode,
-      start: filters.start,
-      end: filters.end,
-    }
-    setDraft(next)
-    onApply(next)
-  }
-
-  function changeMode(mode: CardLookupFilters["mode"]) {
-    setDraft((current) => ({
-      ...current,
-      mode,
-      start: mode === "movement" && current.start > current.end ? current.end : current.start,
-      status: mode === "movement" ? "" : current.status,
-      group: mode === "movement" ? "" : current.group,
-      alert: mode === "snapshot" ? current.alert : "",
-      movement: mode === "movement" ? current.movement : "",
-    }))
-  }
-
-  function removeAdvanced(key: "group" | "alert") {
-    update(key, "")
-    onApply({ ...filters, [key]: "" })
-  }
-
-  function select<K extends keyof CardLookupFilters>(key: K, label: string, placeholder: string, options: readonly CardLookupFilters[K][]) {
-    return (
-      <Field label={label}>
-        <Select
-          aria-label={label}
-          value={draft[key]}
-          onChange={(e) => update(key, e.target.value as CardLookupFilters[K])}
-          options={[{ value: "", label: placeholder }, ...options]}
-        />
-      </Field>
-    )
+    const emptyScope = filterScope(defaultCardLookupFilters)
+    setScope(emptyScope)
+    if (movements) setMovementView((current) => ({ ...current, movement: "" }))
+    else setCardView((current) => ({ ...current, status: "", group: "", alert: "" }))
+    if (!error) onApply({ ...draft, ...emptyScope, status: "", group: "", alert: "", movement: "" })
   }
 
   return (
-    <Form
-      className="panel filter-panel lookup-filter-panel"
-      aria-label="Bộ lọc Tra cứu thẻ"
+    <Form className="panel filter-panel lookup-filter-panel" aria-label="Bộ lọc Tra cứu thẻ"
       onSubmit={(event) => {
         event.preventDefault()
         if (!error) onApply(draft)
-      }}
-    >
+      }}>
       <div className="filter-heading">
         <span>
           <ListFilter size={16} />
@@ -85,105 +106,63 @@ export default function CardLookupFilterPanel({
         </span>
         <Button variant="ghost" onClick={clear}>Xóa bộ lọc</Button>
       </div>
+      <div className="lookup-view-switch" role="group" aria-label="Nội dung tra cứu">
+        <Button variant="ghost" aria-pressed={!movements} onClick={() => changeView(false)}>Danh sách thẻ</Button>
+        <Button variant="ghost" aria-pressed={movements} onClick={() => changeView(true)}>Biến động thẻ</Button>
+      </div>
       <div className="filter-grid lookup-filter-primary">
         <Field label="Tìm thẻ">
-          <Input
-            type="search"
-            aria-label="Tìm thẻ"
-            maxLength={100}
+          <Input type="search" aria-label="Tìm thẻ" maxLength={100}
             placeholder="Mã thẻ, chủ thẻ, biển số, mã thuê bao…"
-            value={draft.keyword}
-            onChange={(e) => update("keyword", e.target.value)}
-          />
+            value={scope.keyword} onChange={(event) => setScope({ ...scope, keyword: event.target.value })} />
         </Field>
-        <Field label="Tra cứu theo">
-          <Select
-            aria-label="Tra cứu theo"
-            value={draft.mode}
-            options={[
-              { value: "current", label: "Hiện tại" },
-              { value: "snapshot", label: "Tại ngày chốt" },
-              { value: "movement", label: "Phát sinh trong kỳ" },
-            ]}
-            onChange={(e) => changeMode(e.target.value as CardLookupFilters["mode"])}
-          />
-        </Field>
+        {!movements && (
+          <div className="lookup-date-control">
+            <Field label="Ngày chốt" error={error || undefined}>
+              <Input type="date" aria-label="Ngày chốt" aria-description="Để trống để xem trạng thái hiện tại."
+                placeholder="Hiện tại" value={cardView.day}
+                min={firstReportDate} max={maxDate}
+                onChange={(event) => setCardView({ ...cardView, day: event.target.value })} />
+            </Field>
+            {cardView.day && (
+              <Button variant="ghost" aria-label="Xóa ngày chốt" title="Trở về hiện tại"
+                onClick={() => setCardView({ ...cardView, day: "", alert: "" })}><X size={15} /></Button>
+            )}
+          </div>
+        )}
+        {movements && (
+          <Field label="Nghiệp vụ">
+            <Select aria-label="Nghiệp vụ" value={movementView.movement}
+              options={[
+                { value: "", label: "Tất cả nghiệp vụ" },
+                ...movementKinds.map((value, index) => ({ value, label: stockMetricLabels[index + 2] })),
+              ]}
+              onChange={(event) => setMovementView({ ...movementView, movement: event.target.value as CardLookupFilters["movement"] })} />
+          </Field>
+        )}
       </div>
       <div className="filter-grid lookup-filter-row">
         <Field label="Khu đô thị">
-          <Select
-            aria-label="Khu đô thị"
-            value={draft.estate}
-            options={[{ value: "", label: "Tất cả khu đô thị" }, ...estates.map((item) => ({ value: item.id, label: item.name }))]}
-            onChange={(e) => update("estate", e.target.value)}
-          />
+          <Select aria-label="Khu đô thị" value={scope.estate}
+            options={[{ value: "", label: "Tất cả khu đô thị" }, ...estates.map(({ id, name }) => ({ value: id, label: name }))]}
+            onChange={(event) => setScope({ ...scope, estate: event.target.value, park: "" })} />
         </Field>
-        {select("park", "Bãi xe", "Tất cả bãi xe", parks)}
-        {select("type", "Loại thẻ", "Tất cả loại thẻ", cardTypes)}
-        {select("vehicle", "Phương tiện", "Tất cả phương tiện", vehicles)}
+        {selectFilter("Bãi xe", scope.park, (park) => setScope({ ...scope, park }), "Tất cả bãi xe", parks)}
+        {selectFilter("Loại thẻ", scope.type, (type) => setScope({ ...scope, type }), "Tất cả loại thẻ", cardTypes)}
+        {selectFilter("Phương tiện", scope.vehicle, (vehicle) => setScope({ ...scope, vehicle }), "Tất cả phương tiện", vehicles)}
       </div>
-      <div className="filter-grid lookup-filter-row">
-        {movements && (
-          <Field label="Từ ngày" required>
-            <Input type="date" aria-label="Từ ngày" value={draft.start} min="2026-09-01" max={maxDate}
-              onChange={(e) => update("start", e.target.value)} />
-          </Field>
-        )}
-        {(movements || snapshot) && (
-          <Field label={movements ? "Đến ngày" : "Ngày chốt"} required>
-            <Input type="date" aria-label={movements ? "Đến ngày" : "Ngày chốt"} value={draft.end}
-              min="2026-09-01" max={maxDate} onChange={(e) => update("end", e.target.value)} />
-          </Field>
-        )}
-        {movements ? (
-          <Field label="Nghiệp vụ">
-            <Select
-              aria-label="Nghiệp vụ"
-              value={draft.movement}
-              options={[
-                { value: "", label: "Tất cả nghiệp vụ" },
-                ...movementKinds.map((value, i) => ({ value, label: stockMetricLabels[i + 2] })),
-              ]}
-              onChange={(e) => update("movement", e.target.value as CardLookupFilters["movement"])}
-            />
-          </Field>
-        ) : select("status", "Trạng thái", "Tất cả trạng thái", lookupStatuses)}
-      </div>
-      {(!movements || filters.group || filters.alert) && (
-        <div className="lookup-filter-more">
-          {!movements && (
-            <Button
-              variant="ghost"
-              aria-expanded={showMore}
-              aria-controls="lookup-extra-filters"
-              onClick={() => setShowMore(!showMore)}
-            >
-              Lọc thêm <ChevronDown size={14} />
-            </Button>
-          )}
-          {filters.mode !== "movement" && filters.group && (
-            <span className="filter-chip">
-              Nhóm khách hàng: {filters.group}
-              <Button variant="ghost" aria-label="Bỏ lọc nhóm khách hàng" onClick={() => removeAdvanced("group")}><X size={12} /></Button>
-            </span>
-          )}
-          {filters.mode === "snapshot" && filters.alert && (
-            <span className="filter-chip">
-              Cảnh báo: {filters.alert}
-              <Button variant="ghost" aria-label="Bỏ lọc cảnh báo" onClick={() => removeAdvanced("alert")}><X size={12} /></Button>
-            </span>
-          )}
+      {movements ? (
+        <div className="filter-second-row">
+          <ReportPeriodFields period={movementView} min={firstReportDate} max={maxDate} error={error}
+            onChange={(period) => setMovementView((current) => ({ ...current, ...period }))} />
+        </div>
+      ) : (
+        <div className="filter-grid lookup-filter-row">
+          {selectFilter("Trạng thái", cardView.status, (status) => setCardView({ ...cardView, status }), "Tất cả trạng thái", lookupStatuses)}
+          {selectFilter("Nhóm khách hàng", cardView.group, (group) => setCardView({ ...cardView, group }), "Tất cả nhóm khách hàng", circulationGroups("Nhóm khách hàng"))}
+          {cardView.day && selectFilter("Cảnh báo", cardView.alert, (alert) => setCardView({ ...cardView, alert }), "Tất cả cảnh báo", cardAlertIds.map((id) => alertNames[id]))}
         </div>
       )}
-      {!movements && (
-        <div id="lookup-extra-filters" hidden={!showMore}>
-          <div className="filter-grid lookup-filter-row">
-            {select("group", "Nhóm khách hàng", "Tất cả nhóm khách hàng", circulationGroups("Nhóm khách hàng"))}
-            {snapshot && select("alert", "Cảnh báo", "Tất cả cảnh báo", cardAlertIds.map((id) => alertNames[id]))}
-          </div>
-        </div>
-      )}
-      {error && <p className="lookup-filter-error" role="alert">{error}</p>}
       <div className="lookup-filter-footer">
         {onBack && <Button variant="ghost" onClick={onBack}><ArrowLeft size={14} /> Quay lại báo cáo</Button>}
         <Button variant="primary" type="submit" disabled={!!error}><Search size={14} /> Áp dụng</Button>

@@ -21,6 +21,7 @@ import {
   dayAt,
   dayMinutes,
   dayStart,
+  dayTypes,
   displayTime,
   durationStats,
   goLive,
@@ -68,7 +69,7 @@ import {
 import { canExport } from "./parking-model"
 
 type Popup = {
-  kind: "use" | "day-type" | "daily" | "site-day" | "hours" | "duration"
+  kind: "use" | "day-type" | "daily" | "site-day" | "hours" | "duration" | "exceeded"
   ids?: string[]
   day?: string
   dayType?: string
@@ -96,13 +97,15 @@ type ChartPoint = {
   value?: string
   color?: string
   action?: () => void
+  incomingAction?: () => void
+  outgoingAction?: () => void
+  lineAction?: () => void
 }
 
 function Chart({
   title,
   description,
   icon,
-  actions,
   details,
   className = "",
   children,
@@ -111,7 +114,6 @@ function Chart({
   title: string
   description: string
   icon: ReactNode
-  actions?: ReactNode
   details: () => void
   className?: string
   children: ReactNode
@@ -129,10 +131,7 @@ function Chart({
           <Heading>{title}</Heading>
           <p>{description}</p>
         </div>
-        <div className="parking-inline">
-          {actions}
-          <span className="report-chart-icon">{icon}</span>
-        </div>
+        <span className="report-chart-icon">{icon}</span>
       </header>
       <div className="parking-chart-body">
         <ChartBoundary key={description}>
@@ -194,13 +193,11 @@ function Plot({
   points,
   format = fmt,
   minWidth,
-  lineOnly = false,
   percentScale = false,
 }: {
   points: ChartPoint[]
   format?: (value: number) => string
   minWidth?: number
-  lineOnly?: boolean
   percentScale?: boolean
 }) {
   const max = Math.max(
@@ -297,36 +294,36 @@ function Plot({
               ]
                 .filter(Boolean)
                 .join(" · ")
+              const hasSeriesLinks = !!(point.incomingAction || point.outgoingAction || point.lineAction)
+              const bar = (value: number, color: string, label: string, action?: () => void, text?: string) => {
+                const style = { height: `${(value / scale) * 100}%`, background: color }
+                return action ? (
+                  <button type="button" className="parking-series-bar" style={style} onClick={action}
+                    title={label} aria-label={label}>{text && <b>{text}</b>}</button>
+                ) : <i style={style}>{text && <b>{text}</b>}</i>
+              }
+              const pointLabel = <>{point.label}{point.warning && <strong className="text-red"> ▲</strong>}</>
               const content = (
                 <>
                   <span className={`parking-column-track ${point.tint ?? ""}`}>
-                    {!lineOnly && point.incoming !== undefined && (
-                      <i
-                        style={{
-                          height: `${(point.incoming / scale) * 100}%`,
-                          background: point.color ?? chartColors[0],
-                        }}
-                      >
-                        {point.value && <b>{point.value}</b>}
-                      </i>
-                    )}
-                    {!lineOnly && point.outgoing !== undefined && (
-                      <i
-                        style={{
-                          height: `${(point.outgoing / scale) * 100}%`,
-                          background: chartColors[2],
-                        }}
-                      />
+                    {point.incoming !== undefined && bar(point.incoming, point.color ?? chartColors[0],
+                      `${point.detail ?? point.label} · Xe vào ${fmt(point.incoming)}`, point.incomingAction, point.value)}
+                    {point.outgoing !== undefined && bar(point.outgoing, chartColors[2],
+                      `${point.detail ?? point.label} · Xe ra ${fmt(point.outgoing)}`, point.outgoingAction)}
+                    {point.line !== undefined && point.lineAction && (
+                      <button type="button" className="parking-series-point"
+                        style={{ top: `${(1 - point.line / scale) * 100}%` }} aria-label={`${point.detail ?? point.label} · Tồn ${fmt(point.line)}`}
+                        title={`${point.detail ?? point.label} · Tồn ${fmt(point.line)}`} onClick={point.lineAction} />
                     )}
                   </span>
-                  <span className="parking-column-label">
-                    {point.label}
-                    {point.warning && <strong className="text-red"> ▲</strong>}
-                  </span>
+                  {hasSeriesLinks && point.action ? (
+                    <button type="button" className="parking-column-label parking-axis-link"
+                      aria-label={`Xem bảng số liệu ${point.detail ?? point.label}`} onClick={point.action}>{pointLabel}</button>
+                  ) : <span className="parking-column-label">{pointLabel}</span>}
                   {point.sub && <small>{point.sub}</small>}
                 </>
               )
-              return point.action ? (
+              return point.action && !hasSeriesLinks ? (
                 <button
                   type="button"
                   key={point.id}
@@ -359,7 +356,6 @@ interface Props {
   update: UpdateParams
   exportFile: ExportParking
   drill: (drill: TripDrill) => void
-  showAlerts: () => void
   showCapacity: () => void
   resetFilters: () => void
 }
@@ -373,7 +369,6 @@ export default function ParkingDashboard({
   update,
   exportFile,
   drill,
-  showAlerts,
   showCapacity,
   resetFilters,
 }: Props) {
@@ -457,6 +452,12 @@ export default function ParkingDashboard({
     setPopup(null)
     drill(value)
   }
+  const lookupAction = (
+    enabled: boolean,
+    metric: TripDrill["metric"],
+    label: string,
+    options: Partial<TripDrill> = {},
+  ) => enabled && !security ? () => navigateDrill({ metric, label, start, end, ...options }) : undefined
   const countLink = (
     count: number,
     metric: TripDrill["metric"],
@@ -566,9 +567,57 @@ export default function ParkingDashboard({
     "site-day": `Lưu lượng ngày ${date(popup?.day ?? "")} theo bãi`,
     hours: "Lưu lượng trong ngày",
     duration: "Thời gian đỗ",
+    exceeded: "Vượt sức chứa theo bãi và ngày",
   }
   let popupTable: ReactNode
   let popupExport: () => ExportRow[] = () => []
+  if (popup?.kind === "exceeded") {
+    const rows = [...total.exceeded].sort((a, b) => b.day.localeCompare(a.day))
+    const vehiclesOver = (row: SiteDay) => row.peak.closing - (row.capacity?.design ?? row.peak.closing)
+    const page = pageNumber(String(popupPage), rows.length, popupSize)
+    popupExport = () => rows.map((row) => ({
+      "Ngày": new Date(dayStart(row.day) * 60000),
+      "Bãi xe": siteById(row.site)?.label,
+      "Chỗ quy hoạch": row.capacity?.design,
+      "Tồn cao nhất": row.peak.closing,
+      "Số xe vượt": vehiclesOver(row),
+      "Số khung giờ vượt": row.exceeded,
+    }))
+    popupTable = (
+      <>
+        <ParkingTable
+          rows={rows.slice((page - 1) * popupSize, page * popupSize)}
+          rowKey={(row) => `${row.site}/${row.day}`}
+          columns={[
+            { label: "Ngày", cell: (row) => date(row.day) },
+            { label: "Bãi xe", cell: (row) => <TextLink onClick={() => focusFlow(row.site, row.day)}>{siteById(row.site)?.label}</TextLink> },
+            { label: "Chỗ quy hoạch", numeric: true, cell: (row) => numberText(row.capacity?.design) },
+            { label: "Tồn cao nhất", numeric: true, cell: (row) => fmt(row.peak.closing) },
+            { label: "Số xe vượt", numeric: true, cell: (row) => fmt(vehiclesOver(row)) },
+            {
+              label: "Số khung giờ vượt",
+              numeric: true,
+              cell: (row) => countLink(row.exceeded, "exceeded", "Xe trong khung vượt sức chứa", {
+                sites: [row.site],
+                start: dayStart(row.day),
+                end: dayStart(row.day) + dayMinutes,
+              }),
+            },
+          ]}
+        />
+        <ParkingPagination
+          count={rows.length}
+          page={page}
+          size={popupSize}
+          change={setPopupPage}
+          changeSize={(size) => {
+            setPopupSize(size)
+            setPopupPage(1)
+          }}
+        />
+      </>
+    )
+  }
   if (popup?.kind === "use") {
     const rows = breakdown(popup.ids).map((unit) => ({
       ...unit,
@@ -679,7 +728,7 @@ export default function ParkingDashboard({
           {
             label: "Lấp đầy",
             numeric: true,
-            cell: (row) => pct(row.total.occupancy),
+            cell: (row) => countLink(row.total.occupancy ?? 0, "parked", "Lấp đầy", countOptions(row), pct(row.total.occupancy)),
           },
           {
             label: "Giờ đỗ kế hoạch",
@@ -692,7 +741,7 @@ export default function ParkingDashboard({
           {
             label: "Đạt kế hoạch",
             numeric: true,
-            cell: (row) => pct(row.total.attainment),
+            cell: (row) => countLink(row.total.attainment ?? 0, "planned", "Đạt kế hoạch", countOptions(row), pct(row.total.attainment)),
           },
         ]}
       />
@@ -723,7 +772,7 @@ export default function ParkingDashboard({
                 row.incoming,
                 "incoming",
                 row.label,
-                { days: row.days },
+                { dayKind: dayTypes.find((kind) => kind === row.label) },
                 numberText(row.incoming / row.days.length, 1),
               ),
           },
@@ -737,14 +786,15 @@ export default function ParkingDashboard({
                     row.parkedHours,
                     "parked",
                     row.label,
-                    { days: row.days },
+                    { dayKind: dayTypes.find((kind) => kind === row.label) },
                     numberText(row.parkedHours / row.days.length, 1),
                   ),
           },
           {
             label: "Lấp đầy",
             numeric: true,
-            cell: (row) => pct(row.occupancy),
+            cell: (row) => countLink(row.occupancy ?? 0, "parked", row.label,
+              { dayKind: dayTypes.find((kind) => kind === row.label) }, pct(row.occupancy)),
           },
         ]}
       />
@@ -879,6 +929,7 @@ export default function ParkingDashboard({
                 row.peakAt
                   ? countLink(row.peak, "closing", "Tồn cao nhất", {
                       sites: row.ids,
+                      start: dayStart(row.day),
                       end: row.peakAt,
                     })
                   : "—",
@@ -1023,6 +1074,24 @@ export default function ParkingDashboard({
       )
     popupTable = (
       <>
+        <div className="parking-flow-filters">
+          <Field label="Bãi hiển thị trên biểu đồ">
+            <Select aria-label="Bãi hiển thị trên biểu đồ" value={detailSite?.id ?? ""}
+              options={data.bySite.map((site) => ({ value: site.id, label: site.label }))}
+              onChange={(event) => {
+                setPopup({ kind: "hours" })
+                update({ flowSite: event.target.value, focus: null })
+              }} />
+          </Field>
+          <Field label="Ngày lưu lượng">
+            <Input type="date" aria-label="Ngày lưu lượng" min={data.days[0]} max={filters.end} value={detailDay}
+              onChange={(event) => {
+                if (!data.days.includes(event.target.value)) return
+                setPopup({ kind: "hours" })
+                update({ flowDay: event.target.value, focus: null })
+              }} />
+          </Field>
+        </div>
         <div className="parking-inline mb-3">
           <Segments
             options={["Giờ", "Ca"]}
@@ -1135,11 +1204,13 @@ export default function ParkingDashboard({
     })
     popupTable = (
       <>
-        <Segments
-          options={["Số lượt", "Tỷ lệ"]}
-          value={showRatios ? "Tỷ lệ" : "Số lượt"}
-          change={(value) => setShowRatios(value === "Tỷ lệ")}
-        />
+        <div className="parking-inline mb-3">
+          <Select aria-label="Nhóm khách hàng" value={guest}
+            options={[allOption("Tất cả nhóm khách hàng"), ...parkingGroups]}
+            onChange={(event) => update({ guest: event.target.value })} />
+          <Segments options={["Số lượt", "Tỷ lệ"]} value={showRatios ? "Tỷ lệ" : "Số lượt"}
+            change={(value) => setShowRatios(value === "Tỷ lệ")} />
+        </div>
         <ParkingTable
           rows={visibleBreakdown(rows)}
           rowKey={(row) => row.key}
@@ -1281,6 +1352,15 @@ export default function ParkingDashboard({
           : "",
     warning: row.exceeded.length > 0,
     action: () => open({ kind: "site-day", day: row.day }),
+    incomingAction: lookupAction(row.incoming > 0, "incoming", "Xe vào", {
+      start: dayStart(row.day), end: dayStart(row.day) + dayMinutes,
+    }),
+    outgoingAction: lookupAction(row.outgoing > 0, "outgoing", "Xe ra", {
+      start: dayStart(row.day), end: dayStart(row.day) + dayMinutes,
+    }),
+    lineAction: lookupAction(row.peak > 0 && !!row.peakAt, "closing", "Tồn cao nhất", {
+      start: dayStart(row.day), end: row.peakAt,
+    }),
   }))
   const chartMetrics = [
     {
@@ -1288,24 +1368,28 @@ export default function ParkingDashboard({
       value: pct(total.occupancy),
       hint: "Giờ đỗ thực tế / tối đa",
       icon: <Gauge size={17} />,
+      action: lookupAction(!!total.occupancy, "parked", "Lượt tính giờ đỗ thực tế"),
     },
     {
       label: "Đạt kế hoạch",
       value: pct(total.attainment),
       hint: "Giờ đỗ thực tế / kế hoạch",
       icon: <Layers3 size={17} />,
+      action: lookupAction(!!total.attainment, "planned", "Lượt tính giờ đỗ so với kế hoạch"),
     },
     {
       label: "Xe vào trong kỳ",
       value: fmt(total.incoming),
       hint: `TB ${numberText(total.incoming / data.days.length)} xe / ngày`,
       icon: <ArrowDownToLine size={17} />,
+      action: lookupAction(total.incoming > 0, "incoming", "Xe vào trong kỳ"),
     },
     {
       label: "Tồn cao nhất",
       value: `${fmt(total.peak)} / ${numberText(total.design)}`,
       hint: total.peakAt ? date(dayAt(total.peakAt - 1)) : "—",
       icon: <TrendingUp size={17} />,
+      action: lookupAction(total.peak > 0 && !!total.peakAt, "closing", "Tồn cao nhất", { end: total.peakAt }),
     },
     {
       label: "Thời gian đỗ trung bình",
@@ -1315,34 +1399,37 @@ export default function ParkingDashboard({
           : `${numberText(allDuration.average, 2)} giờ`,
       hint: `${fmt(allDuration.nightly.length)} lượt qua đêm`,
       icon: <Clock3 size={17} />,
+      action: lookupAction(allDuration.departed.length > 0, "duration", "Lượt tính thời gian đỗ"),
     },
     {
       label: "Ngày có bãi vượt sức chứa",
       value: `${exceededDays} ngày`,
-      hint: <TextLink onClick={showAlerts}>Xem cảnh báo</TextLink>,
+      hint: exceededDays > 0 && <TextLink onClick={() => open({ kind: "exceeded" })}>Xem số liệu theo bãi</TextLink>,
       icon: <TriangleAlert size={17} />,
       warning: exceededDays > 0,
+      action: lookupAction(exceededDays > 0, "exceeded", "Xe trong khung vượt sức chứa"),
     },
   ]
   return (
     <>
       {!security && (
         <div className="parking-kpis">
-          {chartMetrics.map((metric) => (
-            <div
-              className={`summary-card ${
-                metric.warning ? "parking-kpi-warning" : ""
-              }`}
-              key={metric.label}
-            >
+          {chartMetrics.map((metric) => {
+            const value = <>
               <div className="summary-top">
                 <span>{metric.label}</span>
                 <span className="summary-icon">{metric.icon}</span>
               </div>
               <div className="summary-value">{metric.value}</div>
+            </>
+            return <div className={`summary-card ${metric.warning ? "parking-kpi-warning" : ""}`} key={metric.label}>
+              {metric.action ? (
+                <button type="button" className="parking-kpi-link" onClick={metric.action}
+                  aria-label={`${metric.label} · ${metric.value} · Tra cứu lượt xe`}>{value}</button>
+              ) : value}
               <div className="summary-sub">{metric.hint}</div>
             </div>
-          ))}
+          })}
         </div>
       )}
       <div className="parking-chart-layout">
@@ -1352,15 +1439,8 @@ export default function ParkingDashboard({
               title="Lấp đầy và đạt kế hoạch"
               description={scope}
               icon={<BarChart3 size={18} />}
-              note="Đường nét đứt đánh dấu mốc 100%."
+              note="Chọn thanh để xem bảng số liệu, chọn tỷ lệ để xem các lượt xe. Nét đứt đánh dấu mốc 100%."
               details={() => open({ kind: "use" })}
-              actions={
-                <Segments
-                  options={["Khu đô thị", "Bãi"]}
-                  value={utilizationMode}
-                  change={(value) => update({ unit: value })}
-                />
-              }
             >
               <div className="parking-utilization">
                 {chartUnits.map((unit) => (
@@ -1378,12 +1458,7 @@ export default function ParkingDashboard({
                         ["Lấp đầy", unit.total.occupancy, chartColors[0]],
                         ["Đạt kế hoạch", unit.total.attainment, chartColors[1]],
                       ] as const).map(([label, value, color]) => (
-                        <button
-                          type="button"
-                          title={`${unit.label} · ${label} · ${pct(value)}`}
-                          onClick={() => open({ kind: "use", ids: unit.ids })}
-                          key={label}
-                        >
+                        <div className="parking-util-series" key={label}>
                           {value === null ? (
                             <small>
                               {label === "Đạt kế hoạch" &&
@@ -1393,16 +1468,16 @@ export default function ParkingDashboard({
                             </small>
                           ) : (
                             <>
-                              <i
-                                style={{
-                                  background: color,
-                                  width: `${(value / usageScale) * 100}%`,
-                                }}
-                              />
-                              <b>{pct(value)}</b>
+                              <button type="button" className="parking-util-bar"
+                                style={{ background: color, width: `${(value / usageScale) * 100}%` }}
+                                title={`${unit.label} · ${label} · Xem bảng số liệu`}
+                                aria-label={`${unit.label} · ${label} · Xem bảng số liệu`}
+                                onClick={() => open({ kind: "use", ids: unit.ids })} />
+                              {countLink(value, label === "Lấp đầy" ? "parked" : "planned", label,
+                                { sites: unit.ids }, pct(value))}
                             </>
                           )}
-                        </button>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -1437,8 +1512,8 @@ export default function ParkingDashboard({
                       total.occupancy === null ? null : total.occupancy * 100,
                     value: pct(row.occupancy),
                     sub: `${row.days.length} ngày · ${numberText(row.incoming / row.days.length)} xe vào/ngày`,
-                    action: () =>
-                      open({ kind: "day-type", dayType: row.label }),
+                    action: lookupAction((row.occupancy ?? 0) > 0, "parked", row.label,
+                      { dayKind: dayTypes.find((kind) => kind === row.label) }),
                   }))}
               />
               <Legend
@@ -1452,19 +1527,12 @@ export default function ParkingDashboard({
           title="Xe vào, xe ra và tồn cao nhất mỗi ngày"
           description={`${scope} · ${period}`}
           icon={<TrendingUp size={18} />}
-          note="Chọn một ngày để xem lưu lượng từng bãi. Ký hiệu ▲ đánh dấu ngày có bãi vượt sức chứa."
+          note="Chọn cột hoặc điểm tồn để tra cứu lượt xe. Chọn nhãn ngày để xem số liệu từng bãi. Ký hiệu ▲ đánh dấu ngày có bãi vượt sức chứa."
           details={() => open({ kind: "daily" })}
         >
           <Plot
             minWidth={Math.max(0, dailyPoints.length * 31 + 42)}
-            points={dailyPoints.map(
-              ({ line: _line, limit: _limit, ...point }) => point,
-            )}
-          />
-          <Plot
-            minWidth={Math.max(0, dailyPoints.length * 31 + 42)}
             points={dailyPoints}
-            lineOnly
           />
           <Legend
             entries={[
@@ -1491,40 +1559,7 @@ export default function ParkingDashboard({
                 : "Số xe trong bãi tính tại cuối mỗi khung giờ."
             }
             details={() => open({ kind: "hours" })}
-            actions={
-              <Segments
-                options={["Giờ", "Ca"]}
-                value={byShift ? "Ca" : "Giờ"}
-                change={(value) => update({ flow: value, focus: null })}
-              />
-            }
           >
-            <div className="parking-flow-filters">
-              <Field label="Bãi xem trong ngày">
-                <Select
-                  value={detailSite?.id ?? ""}
-                  options={data.bySite.map((site) => ({
-                    value: site.id,
-                    label: site.label,
-                  }))}
-                  onChange={(e) =>
-                    update({ flowSite: e.target.value, focus: null })
-                  }
-                />
-              </Field>
-              <Field label="Ngày xem lưu lượng">
-                <Input
-                  type="date"
-                  min={data.days[0]}
-                  max={filters.end}
-                  value={detailDay}
-                  onChange={(e) => {
-                    if (data.days.includes(e.target.value))
-                      update({ flowDay: e.target.value, focus: null })
-                  }}
-                />
-              </Field>
-            </div>
             {flow.length ? (
               <>
                 <Plot
@@ -1545,6 +1580,15 @@ export default function ParkingDashboard({
                     warning: row.exceeded,
                     sub: row.incomplete ? "Chưa đủ số liệu" : undefined,
                     action: () => open({ kind: "hours", interval: row.id }),
+                    incomingAction: lookupAction(!row.incomplete && row.incoming > 0, "incoming", "Xe vào", {
+                      start: row.start, end: row.end, sites: detailSite ? [detailSite.id] : undefined,
+                    }),
+                    outgoingAction: lookupAction(!row.incomplete && row.outgoing > 0, "outgoing", "Xe ra", {
+                      start: row.start, end: row.end, sites: detailSite ? [detailSite.id] : undefined,
+                    }),
+                    lineAction: lookupAction(!row.incomplete && row.closing > 0, "closing", "Tồn cuối", {
+                      start: row.start, end: row.end, sites: detailSite ? [detailSite.id] : undefined,
+                    }),
                   }))}
                 />
                 <Legend
@@ -1571,18 +1615,10 @@ export default function ParkingDashboard({
         {!security && (
           <Chart
             title="Lượt xe theo thời gian đỗ"
-            description={`TB ${numberText(duration.average, 2)} giờ · ${fmt(duration.nightly.length)} lượt qua đêm · ${fmt(duration.unusual.length)} xe tồn bất thường`}
+            description={`${guest ? `${guest} · ` : ""}TB ${numberText(duration.average, 2)} giờ · ${fmt(duration.nightly.length)} lượt qua đêm · ${fmt(duration.unusual.length)} xe tồn bất thường`}
             icon={<Clock3 size={18} />}
             note="Chỉ tính lượt đã ra trong kỳ."
             details={() => open({ kind: "duration" })}
-            actions={
-              <Select
-                aria-label="Nhóm khách trong biểu đồ thời gian đỗ"
-                value={guest}
-                options={[allOption("Tất cả nhóm khách"), ...parkingGroups]}
-                onChange={(e) => update({ guest: e.target.value })}
-              />
-            }
           >
             {duration.departed.length ? (
               <Plot
@@ -1646,6 +1682,11 @@ export default function ParkingDashboard({
             )}
             {popup.kind === "duration" && guest && <span>{guest}</span>}
           </div>
+          {popup.kind === "use" && <div className="parking-inline mb-3">
+            <span className="field-label">Nhóm trên biểu đồ</span>
+            <Segments options={["Khu đô thị", "Bãi"]} value={utilizationMode}
+              change={(value) => update({ unit: value })} />
+          </div>}
           {popup.kind === "use" &&
             total.occupancy === null &&
             data.bySite.some((site) => site.total.maxHours === null) && (

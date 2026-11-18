@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react"
+import { createPortal } from "react-dom"
+import ColumnSettingsDrawer, { readColumnSelection } from "./ColumnSettingsDrawer"
 import {
   ArrowLeft,
   Camera,
-  ListFilter,
   SlidersHorizontal,
   TriangleAlert,
+  X,
 } from "lucide-react"
 import {
   Badge,
@@ -20,23 +22,35 @@ import { date, estates, fmt } from "./data"
 import {
   alertTabs,
   canExport,
+  clearTripLookup,
   dayAt,
   dayMinutes,
   dayStart,
   daysIn,
+  dayTypes,
   deficit,
   displayTime,
   drillTrips,
+  durationGroups,
   durationHours,
+  exceededHoursBySite,
   goLive,
+  hasLookupHours,
   isLocked,
   nightsFor,
+  overCapacityTripAlert,
+  parkedDuringExceededHour,
   parkingGroups,
   searchTrips,
   siteById,
   statusAt,
   touches,
   tripAlerts,
+  tripLookupDrill,
+  tripLookupKeys,
+  tripLookupMode,
+  tripLookupModes,
+  tripLookupWindow,
 } from "./parking-model"
 import type {
   Adjustment,
@@ -118,32 +132,44 @@ type TripRow = {
 }
 const clearAdvanced = Object.fromEntries(advancedKeys.map((key) => [key, null]))
 const columnsKey = "vparking:parking:trip-columns"
-function readColumns(actor: string) {
-  try {
-    return JSON.parse(
-      localStorage.getItem(`${columnsKey}:${actor}`) ?? "null",
-    ) as string[] | null
-  } catch {
-    return null
+const tripColumnNames = Object.fromEntries([...baseColumns, ...extraColumns].map((label) => [label, label]))
+const tripTimeOptions = [
+  allOption("Trong kỳ"),
+  { value: "incoming", label: "Theo giờ vào" },
+  { value: "outgoing", label: "Theo giờ ra" },
+]
+const tripSortOptions = [
+  { value: "new", label: "Vào mới nhất" },
+  { value: "old", label: "Vào cũ nhất" },
+  { value: "plate", label: "Biển số A–Z" },
+]
+export function readTripLookupParams(params: URLSearchParams) {
+  const values = new URLSearchParams()
+  for (const key of ["q", "sort", ...advancedKeys, ...tripLookupKeys]) {
+    const value = params.get(key)
+    if (value) values.set(key, value)
   }
+  return values
+}
+export function tripLookupFilterError(params: URLSearchParams, filters: ParkingFilters) {
+  const query = params.get("q")?.trim() ?? ""
+  if (query && query.length < 3) return "Nhập ít nhất 3 ký tự để tìm lượt xe."
+  if (tripLookupMode(params) && filters.end >= goLive) {
+    const { start, end } = tripLookupWindow(params, filters)
+    if (start >= end) return "Giờ kết thúc phải sau giờ bắt đầu trong khoảng ngày đã chọn."
+  }
+  return ""
+}
+function readColumns(actor: string) {
+  return readColumnSelection(`${columnsKey}:${actor}`)
+    ?.filter((key) => Object.prototype.hasOwnProperty.call(tripColumnNames, key)) ?? null
 }
 export function parseDrill(param: string | null): TripDrill | null {
   if (!param) return null
   try {
     const value = JSON.parse(param) as TripDrill
     if (
-      ![
-        "incoming",
-        "outgoing",
-        "opening",
-        "closing",
-        "parked",
-        "nightly",
-        "unusual",
-        "duration",
-        "issue",
-        "deficit",
-      ].includes(value.metric) ||
+      !Object.prototype.hasOwnProperty.call(tripLookupModes, value.metric) ||
       typeof value.label !== "string" ||
       !Number.isFinite(value.start) ||
       !Number.isFinite(value.end) ||
@@ -160,14 +186,96 @@ export function parseDrill(param: string | null): TripDrill | null {
     return null
   }
 }
-function drillLabel(drill: TripDrill) {
-  if (drill.metric === "closing")
-    return `Đang trong bãi lúc ${displayTime(drill.end - 1 / 60, true)}`
-  if (drill.metric === "opening")
-    return `Tồn đầu lúc ${displayTime(drill.start)}`
-  if (drill.metric === "duration" || drill.metric === "outgoing")
-    return `Ra trong ${date(dayAt(drill.start))} – ${date(dayAt(drill.end - 1))} · ${drill.label}`
-  return drill.label
+export function TripLookupFields({ params, update, data }: { params: URLSearchParams; update: UpdateParams; data: ParkingReportData | null }) {
+  const mode = tripLookupMode(params)
+  const timeMode = mode === "duration" ? "outgoing" : mode
+  const reportMode = timeMode && timeMode !== "incoming" && timeMode !== "outgoing" ? timeMode : null
+  const lanes = [...new Set([
+    "Làn vào 1", "Làn vào 2", "Làn ra 1", "Làn ra 2", params.get("lane") ?? "",
+    ...(data?.periodTrips.flatMap((trip) => [trip.laneIn, trip.laneOut]) ?? []),
+  ].filter(Boolean))].sort()
+  return (
+    <>
+    <div className="filter-grid parking-lookup-grid">
+      <Field label="Tìm lượt xe">
+        <Input type="search" aria-label="Tìm lượt xe" placeholder={tripSearchPlaceholder} maxLength={100}
+          value={params.get("q") ?? ""} onChange={(e) => update({ q: e.target.value || null })} />
+      </Field>
+      {reportMode ? (
+        <div className="lookup-date-control">
+          <Field label="Điều kiện đối chiếu">
+            <Input readOnly value={reportMode === "closing" ? "Xe có mặt tại mốc chốt" : tripLookupModes[reportMode]}
+              aria-label="Điều kiện đối chiếu" />
+          </Field>
+          <Button variant="ghost" aria-label="Bỏ điều kiện đối chiếu" title="Bỏ điều kiện đối chiếu"
+            onClick={() => update(clearTripLookup)}><X size={15} /></Button>
+        </div>
+      ) : (
+        <Field label="Lọc theo thời gian">
+          <Select aria-label="Lọc theo thời gian" value={timeMode ?? ""} options={tripTimeOptions}
+            onChange={(e) => update({ ...clearTripLookup, tripMode: e.target.value || null })} />
+        </Field>
+      )}
+      <Field label="Sắp xếp">
+        <Select aria-label="Sắp xếp lượt xe" value={params.get("sort") || "new"}
+          options={tripSortOptions} onChange={(e) => update({ sort: e.target.value === "new" ? null : e.target.value })} />
+      </Field>
+    </div>
+    <div className="filter-grid parking-lookup-grid">
+      {([
+        ["state", "Trạng thái lượt", "Tất cả trạng thái", ["Đang trong bãi", "Đã ra"]],
+        ["alert", "Cảnh báo", "Tất cả cảnh báo", [...alertTabs.slice(1), overCapacityTripAlert]],
+        ["group", "Nhóm khách hàng", "Tất cả nhóm khách hàng", [...parkingGroups]],
+        ["lane", "Làn", "Tất cả làn", lanes],
+      ] as const).map(([key, label, all, options]) => (
+        <Field key={key} label={label}>
+          <Select aria-label={label} value={params.get(key) ?? ""} options={[allOption(all), ...options]}
+            onChange={(e) => update({ [key]: e.target.value || null })} />
+        </Field>
+      ))}
+    </div>
+    {mode && mode !== "unusual" && <div className="filter-grid parking-lookup-grid">
+      {hasLookupHours(mode) && mode !== "closing" && (
+        <Field label={mode === "opening" ? "Giờ chốt" : "Từ giờ"} hint="Ngày đầu kỳ · mặc định 00:00">
+          <Input type="time" aria-label={mode === "opening" ? "Giờ chốt" : "Từ giờ"} value={params.get("hourStart") ?? ""}
+            onChange={(e) => update({ hourStart: e.target.value || null })} />
+        </Field>
+      )}
+      {hasLookupHours(mode) && mode !== "opening" && (
+        <Field label={mode === "closing" ? "Giờ chốt" : "Đến giờ"} hint="Ngày cuối kỳ · mặc định 24:00">
+          <Input type="time" aria-label={mode === "closing" ? "Giờ chốt" : "Đến giờ"}
+            value={params.get("hourEnd") ?? ""} onChange={(e) => update({ hourEnd: e.target.value || null })} />
+        </Field>
+      )}
+      {mode && !["opening", "closing", "unusual"].includes(mode) && (
+        <Field label="Loại ngày">
+          <Select aria-label="Loại ngày" value={params.get("dayKind") ?? ""}
+            options={[allOption("Tất cả loại ngày"), ...dayTypes]}
+            onChange={(e) => update({ dayKind: e.target.value || null })} />
+        </Field>
+      )}
+      {timeMode === "outgoing" && (
+        <Field label="Thời gian đỗ">
+          <Select aria-label="Thời gian đỗ" value={params.get("durationGroup") ?? ""}
+            options={[allOption("Tất cả thời gian đỗ"), ...durationGroups.map((label, index) => ({ value: String(index + 1), label }))]}
+            onChange={(e) => update({ durationGroup: e.target.value || null })} />
+        </Field>
+      )}
+    </div>}
+    <div className="parking-inline parking-lookup-grid">
+      {mode !== "nightly" && <Label className="op-check">
+        <Input type="checkbox" checked={params.get("night") === "1"}
+          onChange={(event) => update({ night: event.target.checked ? "1" : null })} />
+        Chỉ lượt qua đêm
+      </Label>}
+      <Label className="op-check">
+        <Input type="checkbox" checked={params.get("adjustment") === "1"}
+          onChange={(event) => update({ adjustment: event.target.checked ? "1" : null })} />
+        Điều chỉnh sau khóa
+      </Label>
+    </div>
+    </>
+  )
 }
 interface TripProps {
   data: ParkingReportData
@@ -190,29 +298,33 @@ export function ParkingTripList({
   exportFile,
   changes,
   openTrip,
-}: TripProps) {
-  const [drawer, setDrawer] = useState<"filters" | "columns" | null>(null)
-  const [draft, setDraft] = useState<Record<string, string | null>>({})
+  headingActions,
+}: TripProps & { headingActions: HTMLDivElement | null }) {
+  const [showColumns, setShowColumns] = useState(false)
   const defaultColumns = [...baseColumns]
   if (new Set(data.bySite.map((site) => site.estate)).size > 1)
     defaultColumns.splice(1, 0, "Khu đô thị")
   const actor = `${access.role}/${access.estate}`
   const [savedColumns, setSavedColumns] = useState(() => readColumns(actor))
-  const [columnDraft, setColumnDraft] = useState<string[]>([])
   const shownColumns = savedColumns ?? defaultColumns
   useEffect(() => setSavedColumns(readColumns(actor)), [actor])
-  const drill = parseDrill(params.get("drill"))
+  const drill = tripLookupDrill(params, filters, data)
   const q = params.get("q")?.slice(0, 100) ?? ""
-  const end = dayStart(filters.end) + dayMinutes
+  const end = drill?.metric === "opening" ? drill.start : drill?.end ?? dayStart(filters.end) + dayMinutes
   const adjustmentOnly = params.get("adjustment") === "1"
-  const laneList = [
-    ...new Set(data.periodTrips.flatMap((trip) => [trip.laneIn, trip.laneOut])),
-  ].sort()
+  const alert = params.get("alert")
+  const exceededHours = useMemo(() => exceededHoursBySite(data.total.exceeded), [data.total.exceeded])
+  const alertLabels = (trip: Trip) => {
+    const labels = tripAlerts(trip, filters, settings)
+    if (parkedDuringExceededHour(trip, exceededHours)) labels.push(overCapacityTripAlert.label)
+    return labels
+  }
   const matches = (trip: Trip) =>
     searchTrips(trip, q) &&
     (!params.get("state") || params.get("state") === statusAt(trip, end)) &&
-    (!params.get("alert") ||
-      tripAlerts(trip, filters, settings).includes(params.get("alert")!)) &&
+    (!alert || (alert === overCapacityTripAlert.value
+      ? parkedDuringExceededHour(trip, exceededHours)
+      : tripAlerts(trip, filters, settings).includes(alert))) &&
     (!params.get("group") || params.get("group") === trip.group) &&
     (!params.get("lane") ||
       [trip.laneIn, trip.laneOut].includes(params.get("lane")!)) &&
@@ -226,13 +338,10 @@ export function ParkingTripList({
   const scopedTrips = drill
     ? data.bySite.flatMap((site) => site.trips)
     : data.periodTrips
-  const filtered: TripRow[] = adjustmentOnly
-    ? uniqueChanges
-        .filter((trip) => matches(trip) && filteredSites(trip))
-        .map((trip) => ({ trip, afterLock: true }))
-    : drill
-      ? drillTrips(scopedTrips.filter(matches), drill, settings)
-      : scopedTrips.filter(matches).map((trip) => ({ trip }))
+  const matchingTrips = (adjustmentOnly ? uniqueChanges.filter(filteredSites) : scopedTrips).filter(matches)
+  const filtered: TripRow[] = (drill
+    ? drillTrips(matchingTrips, drill, settings, data.total.exceeded)
+    : matchingTrips.map((trip) => ({ trip }))).map((row) => ({ ...row, afterLock: adjustmentOnly }))
   const sort = params.get("sort") || "new"
   filtered.sort((a, b) =>
     sort === "old"
@@ -269,7 +378,7 @@ export function ParkingTripList({
     ),
     "Cảnh báo": ({ trip, afterLock }) =>
       [
-        ...tripAlerts(trip, filters, settings),
+        ...alertLabels(trip),
         ...(afterLock ? ["Sau khóa"] : []),
       ].join(" · ") || "—",
     "Làn vào": ({ trip }) => trip.laneIn,
@@ -288,29 +397,14 @@ export function ParkingTripList({
     "Số điện thoại": ({ trip }) => trip.phone,
   }
   const reset = () =>
-    update({ ...clearAdvanced, q: null, drill: null, page: null })
-  const changeColumns = (label: string) =>
-    setColumnDraft((old) =>
-      old.includes(label)
-        ? old.filter((item) => item !== label)
-        : [...old, label],
-    )
-  const moveColumn = (label: string, direction: number) => {
-    const next = [...columnDraft]
-    const index = next.indexOf(label),
-      target = index + direction
-    if (index < 0 || target < 0 || target >= next.length) return
-    const previous = next[target]
-    next[target] = label
-    next[index] = previous
-    setColumnDraft(next)
-  }
+    update({ ...clearAdvanced, ...clearTripLookup, estate: null, site: null, q: null, drill: null, page: null })
   const exportRows = () =>
     exportFile(
       "TraCuuLuotXe",
       () => ({
         "Lượt xe": filtered.map(({ trip, night, afterLock }) => ({
-          ...tripExport(trip, filters, settings, data.days, night),
+          ...tripExport(trip, filters, settings, data.days, night, end),
+          "Cảnh báo": alertLabels(trip).join(", "),
           "Sau khóa": afterLock ? "Có" : "",
         })),
         ...(changes.length
@@ -327,92 +421,19 @@ export function ParkingTripList({
     )
   return (
     <>
+      {headingActions && createPortal(<>
+        {canExport(access) && <ExportButton onClick={exportRows} />}
+      </>, headingActions)}
       <div className="panel">
-        <div className="parking-toolbar">
-          <ParkingSearch
-            value={q}
-            change={(value) => update({ q: value, page: null })}
-            placeholder={tripSearchPlaceholder}
-            minLength={3}
-          />
-          <div className="parking-inline">
-            <Select
-              aria-label="Sắp xếp lượt xe"
-              value={sort}
-              options={[
-                { value: "new", label: "Vào mới nhất" },
-                { value: "old", label: "Vào cũ nhất" },
-                { value: "plate", label: "Biển số A–Z" },
-              ]}
-              onChange={(e) => update({ sort: e.target.value, page: null })}
-            />
-            <Button
-              onClick={() => {
-                setDraft(
-                  Object.fromEntries(
-                    advancedKeys.map((key) => [key, params.get(key)]),
-                  ),
-                )
-                setDrawer("filters")
-              }}
-            >
-              <ListFilter size={15} /> Bộ lọc
-            </Button>
-            <Button
-              onClick={() => {
-                setColumnDraft(shownColumns)
-                setDrawer("columns")
-              }}
-            >
-              <SlidersHorizontal size={15} /> Tùy chỉnh cột
-            </Button>
-            {canExport(access) && <ExportButton onClick={exportRows} />}
+        <div className="op-table-toolbar lookup-table-toolbar">
+          <div className="lookup-result-summary">
+            <span className="count-text" aria-live="polite">
+              <strong>{fmt(filtered.length)}</strong> {drill?.metric === "nightly" ? "lượt qua đêm" : "lượt xe"}
+            </span>
           </div>
-        </div>
-        <div className="parking-chips parking-list-chips">
-          {drill && (
-            <>
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  update({
-                    drill: null,
-                    page: null,
-                    site:
-                      drill.sites?.length === 1 ? drill.sites[0] : filters.site,
-                  })
-                }
-                aria-label="Bỏ điều kiện đối chiếu"
-              >
-                {drillLabel(drill)} ×
-              </Button>
-              {drill.sites?.length === 1 && (
-                <span>{siteById(drill.sites[0])?.label}</span>
-              )}
-              <span>{filters.vehicle}</span>
-            </>
-          )}
-          {advancedKeys.flatMap((key) => {
-            const value = params.get(key)
-            if (!value) return []
-            return [
-              <Button
-                key={key}
-                variant="ghost"
-                onClick={() => update({ [key]: null, page: null })}
-              >
-                {key === "night"
-                  ? "Chỉ lượt qua đêm"
-                  : key === "adjustment"
-                    ? "Điều chỉnh sau khóa"
-                    : value}{" "}
-                ×
-              </Button>,
-            ]
-          })}
-          {(q || drill || advancedKeys.some((key) => params.has(key))) && (
-            <TextLink onClick={reset}>Xóa bộ lọc</TextLink>
-          )}
+          <Button onClick={() => setShowColumns(true)}>
+            <SlidersHorizontal size={15} /> Tùy chỉnh cột
+          </Button>
         </div>
         {adjustmentOnly && (
           <div className="parking-inline parking-list-chips">
@@ -464,137 +485,19 @@ export function ParkingTripList({
           changeSize={(next) => update({ size: String(next), page: null })}
         />
       </div>
-      {drawer === "filters" && (
-        <Overlay
-          drawer
-          title="Bộ lọc lượt xe"
-          onClose={() => setDrawer(null)}
-          footer={
-            <>
-              <Button onClick={() => setDraft(clearAdvanced)}>
-                Xóa bộ lọc
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  update({ ...draft, page: null })
-                  setDrawer(null)
-                }}
-              >
-                Áp dụng
-              </Button>
-            </>
-          }
-        >
-          <div className="parking-drawer-fields">
-            {([
-              ["state", "Trạng thái lượt", ["Đang trong bãi", "Đã ra"]],
-              ["alert", "Cảnh báo", alertTabs.slice(1)],
-              ["group", "Nhóm khách", [...parkingGroups]],
-              ["lane", "Làn", laneList],
-            ] as const).map(([key, label, options]) => (
-              <Field key={key} label={label}>
-                <Select
-                  value={draft[key] ?? ""}
-                  options={[allOption("Tất cả"), ...options]}
-                  onChange={(e) =>
-                    setDraft({ ...draft, [key]: e.target.value })
-                  }
-                />
-              </Field>
-            ))}
-            <Label className="op-check">
-              <Input
-                type="checkbox"
-                checked={draft.night === "1"}
-                onChange={(e) =>
-                  setDraft({ ...draft, night: e.target.checked ? "1" : null })
-                }
-              />
-              Chỉ lượt qua đêm
-            </Label>
-            <Label className="op-check">
-              <Input
-                type="checkbox"
-                checked={draft.adjustment === "1"}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    adjustment: e.target.checked ? "1" : null,
-                  })
-                }
-              />
-              Điều chỉnh sau khóa
-            </Label>
-          </div>
-        </Overlay>
-      )}
-      {drawer === "columns" && (
-        <Overlay
-          drawer
-          title="Tùy chỉnh cột"
-          onClose={() => setDrawer(null)}
-          footer={
-            <>
-              <Button onClick={() => setColumnDraft(defaultColumns)}>
-                Mặc định
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  setSavedColumns(columnDraft)
-                  try {
-                    localStorage.setItem(
-                      `${columnsKey}:${actor}`,
-                      JSON.stringify(columnDraft),
-                    )
-                  } catch {}
-                  setDrawer(null)
-                }}
-              >
-                Lưu
-              </Button>
-            </>
-          }
-        >
-          {[
-            ...columnDraft,
-            ...[...baseColumns, ...extraColumns].filter(
-              (label) => !columnDraft.includes(label),
-            ),
-          ].map((label) => (
-            <div className="parking-column-setting" key={label}>
-              <Label className="op-check">
-                <Input
-                  type="checkbox"
-                  checked={columnDraft.includes(label)}
-                  onChange={() => changeColumns(label)}
-                />
-                {label}
-              </Label>
-              {columnDraft.includes(label) && (
-                <div className="parking-inline">
-                  <Button
-                    variant="ghost"
-                    aria-label={`Đưa ${label} lên`}
-                    disabled={columnDraft[0] === label}
-                    onClick={() => moveColumn(label, -1)}
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    aria-label={`Đưa ${label} xuống`}
-                    disabled={columnDraft[columnDraft.length - 1] === label}
-                    onClick={() => moveColumn(label, 1)}
-                  >
-                    ↓
-                  </Button>
-                </div>
-              )}
-            </div>
-          ))}
-        </Overlay>
+      {showColumns && (
+        <ColumnSettingsDrawer
+          key={actor}
+          columns={tripColumnNames}
+          selected={shownColumns}
+          defaults={defaultColumns}
+          onClose={() => setShowColumns(false)}
+          onSave={(selection) => {
+            setSavedColumns(selection)
+            try { localStorage.setItem(`${columnsKey}:${actor}`, JSON.stringify(selection)) } catch {}
+            setShowColumns(false)
+          }}
+        />
       )}
     </>
   )

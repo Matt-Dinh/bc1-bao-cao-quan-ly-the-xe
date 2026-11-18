@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import CardLookupFilterPanel from "./CardLookupFilterPanel"
+import ColumnSettingsDrawer, { readColumnSelection } from "./ColumnSettingsDrawer"
 import {
   ArrowLeft,
   ArrowRight,
@@ -22,6 +23,7 @@ import {
   ScanLine,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   TriangleAlert,
   UnlockKeyhole,
   Upload,
@@ -44,6 +46,7 @@ import {
   alertNames,
   cardTypes,
   cards,
+  columnNames,
   customerGroups,
   date,
   estates,
@@ -53,6 +56,7 @@ import {
   vehicles,
 } from "./data"
 import type { Card } from "./data"
+import type { ReactNode } from "react"
 import { cardHistory, defaultCardLookupFilters, matchesCardKeyword, stockMetricLabels } from "./report-model"
 import type { CardEvent, CardLookupFilters, ReportLookupResult } from "./report-model"
 import {
@@ -104,6 +108,15 @@ const movementNames = {
   lock: "Khóa thẻ",
 } satisfies Record<CardEvent["kind"], string>
 const eventTime = (event: CardEvent) => `${date(event.at.slice(0, 10))} ${event.at.slice(11, 16)}`
+type CardListRow = { key: string; card: Card; event?: CardEvent }
+const cardColumnsKey = "vparking:card-lookup:columns"
+const basicCardColumns = ["id", "park", "type", "vehicle", "owner", "plate"]
+const cardEventColumns = {
+  eventTime: "Thời điểm phát sinh",
+  movement: "Nghiệp vụ",
+  before: "Trạng thái trước",
+  after: "Trạng thái sau",
+}
 interface ImportRow {
   id: string
   error: string
@@ -182,6 +195,12 @@ export default function Operations({
   const [typeFilter, setTypeFilter] = useState("")
   const [vehicleFilter, setVehicleFilter] = useState("")
   const [page, setPage] = useState(1)
+  const [showColumnSettings, setShowColumnSettings] = useState(false)
+  const [cardColumnPreferences, setCardColumnPreferences] = useState(() => ({
+    current: readColumnSelection(`${cardColumnsKey}:current`),
+    snapshot: readColumnSelection(`${cardColumnsKey}:snapshot`),
+    movement: readColumnSelection(`${cardColumnsKey}:movement`),
+  }))
   const [size, setSize] = useState(20)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -238,6 +257,7 @@ export default function Operations({
       setDirty(false)
       setAction(null)
       setDetailId(null)
+      setShowColumnSettings(false)
       if (!fromWarehouse) {
         setSearch("")
         setQuery("")
@@ -702,7 +722,7 @@ export default function Operations({
         (!typeFilter || c.type === typeFilter) &&
         (!vehicleFilter || c.vehicle === vehicleFilter) && matchesCardKeyword(c, q),
       )
-  let cardRows: { key: string; card: Card; event?: CardEvent }[]
+  let cardRows: CardListRow[]
   if (reportLookup?.events) {
     const byId = new Map(visibleCards.map((card) => [card.id, card]))
     cardRows = reportLookup.events.flatMap((event, index) => {
@@ -786,6 +806,44 @@ export default function Operations({
       {c.id}
     </Button>
   )
+  const lookupMode = lookupFilters?.mode ?? "current"
+  const defaultLookupColumns = [
+    ...basicCardColumns,
+    ...(lookupMode === "movement" ? Object.keys(cardEventColumns) : ["status"]),
+    ...(lookupMode === "snapshot" ? ["expiry", "alerts"] : []),
+  ]
+  const lookupColumnNames: Record<string, string> = {
+    ...columnNames,
+    park: "Kho bãi",
+    plate: "Biển số",
+    group: "Nhóm khách hàng",
+    status: lookupMode === "snapshot" ? "Trạng thái tại mốc chốt" : "Trạng thái",
+    ...(lookupMode === "movement" ? cardEventColumns : {}),
+  }
+  if (lookupMode === "movement") delete lookupColumnNames.status
+  const selectedLookupColumns = (cardColumnPreferences[lookupMode] ?? defaultLookupColumns)
+    .filter((key) => Object.prototype.hasOwnProperty.call(lookupColumnNames, key))
+  if (!selectedLookupColumns.includes("id")) selectedLookupColumns.unshift("id")
+  function renderLookupCell(column: string, { key, card, event }: CardListRow): ReactNode {
+    switch (column) {
+      case "id": return <>{cardLink(card, key)}<span className="estate-code">{card.batch}</span></>
+      case "estate": return estates.find((estate) => estate.id === card.estate)?.name || "—"
+      case "park": return <>{event?.park ?? card.park}<span className="estate-code">{estates.find((estate) => estate.id === card.estate)?.short}</span></>
+      case "type": return <span className={card.type === "VIP" ? "vip-label" : ""}>{card.type}</span>
+      case "status": return badge(card)
+      case "expiry": case "issued": case "lastTrip": return date(card[column])
+      case "alerts": return card.alerts.map((id) => alertNames[id]).join(", ") || "—"
+      case "phone": return maskedPhone(card.phone)
+      case "eventTime": return event ? eventTime(event) : "—"
+      case "movement": return event ? movementNames[event.kind] : "—"
+      case "before": return event?.before?.status || "—"
+      case "after": return event ? <Badge tone={statusTone(event.after.status)}>{event.after.status}</Badge> : "—"
+      default: {
+        const value = card[column as keyof Card]
+        return value === "" ? "—" : value ?? "—"
+      }
+    }
+  }
   const title = editor
     ? editor.kind === "import"
       ? "Nhập kho thẻ theo lô"
@@ -1208,12 +1266,17 @@ export default function Operations({
           )}
           <section className="panel">
             {screen === "lookup" ? (
-              <div className="op-table-toolbar">
-                <span className="count-text" aria-live="polite">
-                  <strong>{fmt(currentCount)}</strong> {lookupResult?.events ? "lượt phát sinh" : "thẻ"}
-                  {lookupResult?.events && ` · ${fmt(visibleCards.length)} thẻ`}
-                </span>
-                {reportLookup && <span className="muted">{reportLookup.period}</span>}
+              <div className="op-table-toolbar lookup-table-toolbar">
+                <div className="lookup-result-summary">
+                  <span className="count-text" aria-live="polite">
+                    <strong>{fmt(currentCount)}</strong> {lookupResult?.events ? "lượt phát sinh" : "thẻ"}
+                    {lookupResult?.events && ` · ${fmt(visibleCards.length)} thẻ`}
+                  </span>
+                  {reportLookup && <span className="muted">{reportLookup.period}</span>}
+                </div>
+                <Button onClick={() => setShowColumnSettings(true)}>
+                  <SlidersHorizontal size={15} /> Tùy chỉnh cột
+                </Button>
               </div>
             ) : screen !== "inventory" && listToolbar}
             {screen === "inventory" && (
@@ -1301,20 +1364,7 @@ export default function Operations({
                     <thead>
                       <tr>
                         {(isCardList
-                          ? [
-                              "Mã thẻ",
-                              "Kho bãi",
-                              "Loại thẻ",
-                              "Phương tiện",
-                              "Chủ thẻ",
-                              "Biển số",
-                              ...(reportLookup?.events
-                                ? ["Thời điểm phát sinh", "Nghiệp vụ", "Trạng thái trước", "Trạng thái sau"]
-                                : reportLookup
-                                  ? ["Trạng thái tại mốc chốt", "Hiệu lực đến", "Cảnh báo"]
-                                  : ["Trạng thái"]),
-                              "Thao tác",
-                            ]
+                          ? [...selectedLookupColumns.map((key) => lookupColumnNames[key]), "Thao tác"]
                           : screen === "imports"
                             ? [
                                 "Mã lô nhập",
@@ -1364,51 +1414,10 @@ export default function Operations({
                     </thead>
                     <tbody>
                       {isCardList
-                        ? slice(cardRows).map(({ key, card: c, event }) => (
-                            <tr key={key}>
-                              <td>
-                                {cardLink(c, key)}
-                                <span className="estate-code">{c.batch}</span>
-                              </td>
-                              <td>
-                                {event?.park ?? c.park}
-                                <span className="estate-code">
-                                  {
-                                    estates.find((e) => e.id === c.estate)
-                                      ?.short
-                                  }
-                                </span>
-                              </td>
-                              <td>
-                                <span
-                                  className={
-                                    c.type === "VIP" ? "vip-label" : ""
-                                  }
-                                >
-                                  {c.type}
-                                </span>
-                              </td>
-                              <td>{c.vehicle}</td>
-                              <td>{c.owner}</td>
-                              <td>{c.plate}</td>
-                              {event ? (
-                                <>
-                                  <td>{eventTime(event)}</td>
-                                  <td>{movementNames[event.kind]}</td>
-                                  <td>{event.before?.status || "—"}</td>
-                                  <td><Badge tone={statusTone(event.after.status)}>{event.after.status}</Badge></td>
-                                </>
-                              ) : (
-                                <>
-                                  <td>{badge(c)}</td>
-                                  {reportLookup && (
-                                    <>
-                                      <td>{date(c.expiry)}</td>
-                                      <td>{c.alerts.map((i) => alertNames[i]).join(", ") || "—"}</td>
-                                    </>
-                                  )}
-                                </>
-                              )}
+                        ? slice(cardRows).map((row) => {
+                          const { key, card: c } = row
+                          return <tr key={key}>
+                              {selectedLookupColumns.map((column) => <td key={column}>{renderLookupCell(column, row)}</td>)}
                               <td>
                                 <div className="op-row-actions">
                                   <Button
@@ -1455,7 +1464,7 @@ export default function Operations({
                                 </div>
                               </td>
                             </tr>
-                          ))
+                          })
                         : screen === "subscriptions"
                           ? slice(subRows).map((s) => {
                               const c = state.cards.find(
@@ -2490,6 +2499,21 @@ export default function Operations({
             </div>
           )}
         </Overlay>
+      )}
+      {screen === "lookup" && showColumnSettings && (
+        <ColumnSettingsDrawer
+          key={lookupMode}
+          columns={lookupColumnNames}
+          selected={selectedLookupColumns}
+          defaults={defaultLookupColumns}
+          required="id"
+          onClose={() => setShowColumnSettings(false)}
+          onSave={(selection) => {
+            setCardColumnPreferences((current) => ({ ...current, [lookupMode]: selection }))
+            try { localStorage.setItem(`${cardColumnsKey}:${lookupMode}`, JSON.stringify(selection)) } catch {}
+            setShowColumnSettings(false)
+          }}
+        />
       )}
       {detail && (
         <Overlay
