@@ -83,12 +83,12 @@ export const customerGroups = [
   "Kích cầu",
   "Chưa phân nhóm",
 ]
-export const alertNames = [
-  "Sắp hết hạn",
-  "Vẫn qua làn",
-  "Không khớp thông tin",
-  "Cấp nhưng không sử dụng",
-]
+export const alertNames: Record<number, string> = {
+  0: "Sắp hết hạn",
+  2: "Không khớp thông tin",
+  3: "Cấp nhưng không sử dụng",
+}
+export const cardAlertIds = Object.keys(alertNames).map(Number)
 export type Filters = {
   estate: string
   park: string
@@ -173,13 +173,11 @@ export const cards: Card[] = estates.flatMap((e, ei) => {
           ? [0]
           : ei === 1 && i === 20
             ? [0]
-            : ei === 1 && i === 0
-              ? [1]
-              : ei === 0 && (i === 22 || i === 23)
-                ? [2]
-                : ei === 2 && i === 14
-                  ? [3]
-                  : []
+            : ei === 0 && (i === 22 || i === 23)
+              ? [2]
+              : ei === 2 && i === 14
+                ? [3]
+                : []
       const status = lost
         ? "Mất / hỏng"
         : inStock
@@ -232,7 +230,7 @@ export const cards: Card[] = estates.flatMap((e, ei) => {
         batch: `LO-${e.code}-202609`,
         apartment: i === 23 ? "—" : `S${ei + 1}.${(i % 4) + 1}-${1000 + i}`,
         issued: "2026-09-01",
-        lastTrip: alerts.includes(3) ? "2026-09-12" : "2026-10-28",
+        lastTrip: alerts.includes(3) ? "2026-09-12" : ei === 1 && i === 0 ? "2026-10-12" : "2026-10-28",
         unused: alerts.includes(3) ? 46 : 0,
         alerts,
         times: i === 0 ? 2 : 1,

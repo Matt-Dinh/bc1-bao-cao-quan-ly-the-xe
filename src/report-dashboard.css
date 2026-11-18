@@ -8,8 +8,8 @@
 .report-kpi-icon { color: #7c93b6; background: #f1f5fb; height: 28px; width: 28px; display: grid; place-items: center; border-radius: 7px; flex-shrink: 0; }
 .report-kpi-value { color: #263449; font-size: 29px; line-height: 1; font-weight: 650; letter-spacing: -.8px; }
 .report-kpi-value small { color: #8e96a4; font-weight: 400; font-size: 10px; letter-spacing: 0; }
-.report-kpi-note { display: flex; align-items: center; justify-content: space-between; gap: 7px; color: #9097a2; font-size: 9px; line-height: 1.6; }
-.report-kpi-note svg { color: #9cabbf; }
+.report-kpi-note { display: flex; align-items: center; justify-content: space-between; gap: 7px; color: #626e7e; font-size: 10px; line-height: 1.6; }
+.report-kpi-note svg { color: #9cabbf; flex-shrink: 0; }
 .report-kpi-warning .report-kpi-icon { background: #fff6ec; color: #c18f46; }
 .report-kpi-warning .report-kpi-value { color: #b47f38; }
 .report-kpi:disabled { opacity: 1; }
@@ -110,7 +110,6 @@
   .report-period-note { flex-wrap: wrap; gap: 5px; font-size: 9px; }
   .report-kpis { grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
   .report-kpi.button { padding: 13px; gap: 10px; }
-  .report-kpi-note { font-size: 8px; }
   .report-kpi-value { font-size: 27px; }
   .report-kpi-note > svg { display: none; }
   .report-chart-panel { padding: 18px 15px 0; }

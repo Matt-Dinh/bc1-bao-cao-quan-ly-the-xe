@@ -1,10 +1,16 @@
 import {
   alertNames,
+  cardAlertIds,
   cards,
   cardTypes,
   customerGroups,
+  date,
+  defaults,
   estates,
   initialThresholds,
+  maxDate,
+  normalize,
+  today,
   vehicles,
 } from "./data"
 import type { Card, Filters, Threshold } from "./data"
@@ -25,6 +31,55 @@ export interface MetricResult {
   cards: Card[]
   occurrences: Record<string, number>
   count: number
+  events: CardEvent[]
+}
+export const stockMetricLabels = [
+  "Tồn kho đầu kỳ", "Lưu hành đầu kỳ", "Nhập mới", "Cấp ra", "Thu hồi",
+  "Mất / hỏng", "Tồn kho cuối kỳ", "Thẻ lưu hành cuối kỳ",
+]
+export const movementKinds = ["import", "issue", "return", "loss"] as const
+export const lookupStatuses = ["Trong kho", "Đang hoạt động", "Lưu hành", "Đang sử dụng", "Khóa", "Hết hạn", "Mất / hỏng"] as const
+export const circulationGroupings = ["Loại thẻ", "Loại phương tiện", "Nhóm khách hàng"] as const
+export const circulationStatuses = ["Đang sử dụng", "Khóa", "Hết hạn"] as const
+export type CirculationGrouping = typeof circulationGroupings[number]
+export type CirculationStatus = typeof circulationStatuses[number]
+export type ReportLookupSelection =
+  | { kind: "metric"; index: number; estate?: string; park?: string }
+  | { kind: "circulation"; groupBy?: CirculationGrouping; group?: string; status?: CirculationStatus; estate?: string }
+  | { kind: "alert"; id: number }
+export type CardLookupFilters = {
+  mode: "current" | "snapshot" | "movement"
+  keyword: string
+  start: string
+  end: string
+  estate: string
+  park: string
+  type: string
+  vehicle: string
+  status: typeof lookupStatuses[number] | ""
+  group: string
+  alert: string
+  movement: typeof movementKinds[number] | ""
+}
+export const defaultCardLookupFilters: CardLookupFilters = {
+  mode: "current",
+  keyword: "",
+  start: defaults.start,
+  end: defaults.end,
+  estate: "",
+  park: "",
+  type: "",
+  vehicle: "",
+  status: "",
+  group: "",
+  alert: "",
+  movement: "",
+}
+export type ReportLookupResult = {
+  period: string
+  asOf: string
+  cards: Card[]
+  events: CardEvent[] | null
 }
 const initialStates = new Map<string, State>()
 export const cardEvents: CardEvent[] = []
@@ -116,7 +171,7 @@ for (const estate of estates) {
     event(card, "2026-10-03", "import", null, warehouseAt(card.park))
   }
 }
-const blocked = cards.find((c) => c.estate === "B" && c.alerts.includes(1))!
+const blocked = allById.get("B-OT-00001")!
 initialStates.set(blocked.id, { status: "Đang hoạt động", park: blocked.park })
 event(
   blocked,
@@ -145,6 +200,13 @@ export function previousDay(day: string) {
     .toISOString()
     .slice(0, 10)
 }
+export function openingSnapshotDay(start: string) {
+  return start <= "2026-09-01" ? "2026-09-01" : previousDay(start)
+}
+export function openingSnapshotLabel(start: string) {
+  const day = openingSnapshotDay(start)
+  return day === start ? `Số dư đầu ngày ${date(day)}` : `Chốt hết ngày ${date(day)}`
+}
 export function snapshot(
   day: string,
   thresholds: (estate: string) => Threshold = (id) => initialThresholds[id],
@@ -163,16 +225,7 @@ export function snapshot(
         .filter((e) => e.kind === "issue")
         .slice(-1)[0]
         ?.at.slice(0, 10) || source.issued
-    const lastTrip =
-      state.status === "Trong kho"
-        ? ""
-        : source.alerts.includes(1)
-          ? day >= "2026-10-12"
-            ? "2026-10-12"
-            : ""
-          : source.lastTrip <= day
-            ? source.lastTrip
-            : ""
+    const lastTrip = state.status !== "Trong kho" && source.lastTrip <= day ? source.lastTrip : ""
     const unused = daysBetween(
       lastTrip && lastTrip > issued ? lastTrip : issued,
       day,
@@ -193,7 +246,6 @@ export function snapshot(
       remaining <= threshold.expiry
     )
       card.alerts.push(0)
-    if (source.alerts.includes(1) && day >= "2026-10-12") card.alerts.push(1)
     if (
       source.alerts.includes(2) &&
       day >= "2026-10-10" &&
@@ -209,56 +261,41 @@ export function snapshot(
     return card
   })
 }
-const inScope = (card: Card, f: Filters, park = card.park) =>
+type CardScope = Pick<Filters, "estate" | "park" | "type" | "vehicle">
+type CardPeriod = CardScope & Pick<Filters, "start" | "end">
+const inScope = (card: Card, f: CardScope, park = card.park) =>
   (!f.estate || card.estate === f.estate) &&
   (!f.park || park === f.park) &&
   (!f.type || card.type === f.type) &&
   (!f.vehicle || card.vehicle === f.vehicle)
 
-export function metricCards(f: Filters, metric: number): MetricResult {
+function movementsInScope(f: CardPeriod, kind: CardLookupFilters["movement"], thresholds?: (estate: string) => Threshold) {
+  const latest = new Map(snapshot(f.end, thresholds).map((card) => [card.id, card]))
+  const selected = new Map<string, Card>()
   const occurrences: Record<string, number> = {}
-  let rows: Card[]
-  if ([0, 1, 6, 7].includes(metric)) {
-    rows = snapshot(
-      metric < 2
-        ? f.start <= "2026-09-01"
-          ? "2026-09-01"
-          : previousDay(f.start)
-        : f.end,
-    ).filter(
-      (card) =>
-        inScope(card, f) &&
-        ([0, 6].includes(metric)
-          ? card.status === "Trong kho"
-          : ["Đang hoạt động", "Khóa"].includes(card.status)),
-    )
-    rows.forEach((c) => {
-      occurrences[c.id] = 1
-    })
-  } else {
-    const kind = ["", "", "import", "issue", "return", "loss"][metric]
-    const latest = new Map(snapshot(f.end).map((c) => [c.id, c]))
-    const selected = new Map<string, Card>()
-    for (const entry of cardEvents) {
-      const card = latest.get(entry.cardId)
-      if (
-        !card ||
-        entry.kind !== kind ||
-        entry.at.slice(0, 10) < f.start ||
-        entry.at.slice(0, 10) > f.end ||
-        !inScope(card, f, entry.park)
-      )
-        continue
-      selected.set(card.id, card)
-      occurrences[card.id] = (occurrences[card.id] || 0) + 1
-    }
-    rows = [...selected.values()]
+  const events: CardEvent[] = []
+  for (const entry of cardEvents) {
+    const card = latest.get(entry.cardId)
+    const day = entry.at.slice(0, 10)
+    if (!card || entry.kind === "lock" || (kind && entry.kind !== kind) ||
+        day < f.start || day > f.end || !inScope(card, f, entry.park)) continue
+    selected.set(card.id, card)
+    events.push(entry)
+    occurrences[card.id] = (occurrences[card.id] || 0) + 1
   }
-  return {
-    cards: rows,
-    occurrences,
-    count: Object.values(occurrences).reduce((sum, n) => sum + n, 0),
-  }
+  return { cards: [...selected.values()], events, occurrences, count: events.length }
+}
+
+export function metricCards(f: Filters, metric: number, thresholds?: (estate: string) => Threshold): MetricResult {
+  if (metric >= 2 && metric <= 5) return movementsInScope(f, movementKinds[metric - 2], thresholds)
+  const occurrences: Record<string, number> = {}
+  const rows = snapshot(metric < 2 ? openingSnapshotDay(f.start) : f.end, thresholds).filter(
+    (card) => inScope(card, f) && (metric === 0 || metric === 6
+      ? card.status === "Trong kho"
+      : isCirculating(card)),
+  )
+  rows.forEach((card) => { occurrences[card.id] = 1 })
+  return { cards: rows, occurrences, count: rows.length, events: [] }
 }
 export function stockMetrics(f: Filters) {
   const key = [f.start, f.end, f.estate, f.park, f.type, f.vehicle].join("|")
@@ -274,58 +311,186 @@ export function stockMetrics(f: Filters) {
 }
 const metricsCache = new Map<string, number[]>()
 
+export function circulationGroups(groupBy: CirculationGrouping) {
+  if (groupBy === "Loại thẻ") return cardTypes
+  if (groupBy === "Loại phương tiện") return vehicles
+  return [...customerGroups, "VIP và Vãng lai"]
+}
+export function inCirculationGroup(card: Card, groupBy: CirculationGrouping, label: string) {
+  if (groupBy === "Loại thẻ") return card.type === label
+  if (groupBy === "Loại phương tiện") return card.vehicle === label
+  if (label === "VIP và Vãng lai") return card.type !== "Thuê bao tháng"
+  return card.type === "Thuê bao tháng" && card.group === label
+}
+export function circulationStatus(card: Card, day: string): CirculationStatus {
+  if (card.status === "Khóa") return "Khóa"
+  return card.expiry && card.expiry < day ? "Hết hạn" : "Đang sử dụng"
+}
+const isCirculating = (card: Card) => card.status === "Đang hoạt động" || card.status === "Khóa"
+
 export function managementReport(
   f: Filters,
   thresholds: (estate: string) => Threshold = (id) => initialThresholds[id],
-  groupBy = "Loại thẻ",
+  groupBy: CirculationGrouping = "Loại thẻ",
 ) {
   const closing = snapshot(f.end, thresholds).filter((card) => inScope(card, f))
-  const circulation = closing.filter((c) =>
-    ["Đang hoạt động", "Khóa"].includes(c.status),
-  )
-  const categories =
-    groupBy === "Loại thẻ"
-      ? cardTypes
-      : groupBy === "Loại phương tiện"
-        ? vehicles
-        : [...customerGroups, "VIP và Vãng lai"]
+  const circulation = closing.filter(isCirculating)
+  const categories = circulationGroups(groupBy)
   return {
     metrics: stockMetrics(f),
     closing,
     circulation,
     groups: categories.map((label) => ({
       label,
-      cards: circulation.filter((c) =>
-        groupBy === "Loại thẻ"
-          ? c.type === label
-          : groupBy === "Loại phương tiện"
-            ? c.vehicle === label
-            : label === "VIP và Vãng lai"
-              ? c.type !== "Thuê bao tháng"
-              : c.type === "Thuê bao tháng" && c.group === label,
-      ),
+      cards: circulation.filter((c) => inCirculationGroup(c, groupBy, label)),
     })),
-    statuses: [
-      {
-        label: "Đang sử dụng",
-        cards: circulation.filter(
-          (c) =>
-            c.status === "Đang hoạt động" && (!c.expiry || c.expiry >= f.end),
-        ),
-      },
-      { label: "Khóa", cards: circulation.filter((c) => c.status === "Khóa") },
-      {
-        label: "Hết hạn",
-        cards: circulation.filter(
-          (c) => c.status === "Đang hoạt động" && c.expiry && c.expiry < f.end,
-        ),
-      },
-    ],
-    alerts: alertNames.map((label, i) => ({
+    statuses: circulationStatuses.map((label) => ({
       label,
-      cards: closing.filter((c) => c.alerts.includes(i)),
+      cards: circulation.filter((c) => circulationStatus(c, f.end) === label),
+    })),
+    alerts: cardAlertIds.map((id) => ({
+      id,
+      label: alertNames[id],
+      cards: closing.filter((c) => c.alerts.includes(id)),
     })),
     warned: closing.filter((c) => c.alerts.length > 0).length,
+  }
+}
+
+function readReportLookupParams(params: URLSearchParams): ReportLookupSelection | null {
+  const estate = estates.find((item) => item.id === params.get("lookupEstate"))
+  const park = estate?.parks.find((item) => item === params.get("lookupPark"))
+  const metric = stockMetricLabels.findIndex((_, i) => String(i) === params.get("metric"))
+  if (metric >= 0) return { kind: "metric", index: metric, estate: estate?.id, park }
+  if (params.get("circulation") === "1") {
+    const groupBy = circulationGroupings.find((item) => item === params.get("groupBy"))
+    const group = groupBy ? circulationGroups(groupBy).find((item) => item === params.get("group")) : undefined
+    const status = circulationStatuses.find((item) => item === params.get("usage"))
+    return { kind: "circulation", estate: estate?.id, groupBy, group, status }
+  }
+  const alert = cardAlertIds.find((id) => String(id) === params.get("alertGroup"))
+  return alert !== undefined ? { kind: "alert", id: alert } : null
+}
+
+export function reportLookupFilters(applied: Filters, selection: ReportLookupSelection): CardLookupFilters {
+  const filters: CardLookupFilters = {
+    ...defaultCardLookupFilters,
+    mode: "snapshot",
+    start: applied.start,
+    end: applied.end,
+    estate: selection.kind !== "alert" ? selection.estate || applied.estate : applied.estate,
+    park: selection.kind === "metric" ? selection.park || applied.park : applied.park,
+    type: applied.type,
+    vehicle: applied.vehicle,
+  }
+  if (selection.kind === "metric") {
+    const { index } = selection
+    if (index >= 2 && index <= 5) return { ...filters, mode: "movement", movement: movementKinds[index - 2] }
+    return { ...filters, end: index < 2 ? openingSnapshotDay(filters.start) : filters.end,
+      status: index === 0 || index === 6 ? "Trong kho" : "Lưu hành" }
+  }
+  if (selection.kind === "alert") return { ...filters, alert: alertNames[selection.id] }
+  if (selection.group) {
+    if (selection.groupBy === "Loại thẻ") filters.type = selection.group
+    if (selection.groupBy === "Loại phương tiện") filters.vehicle = selection.group
+    if (selection.groupBy === "Nhóm khách hàng") filters.group = selection.group
+  }
+  return { ...filters, status: selection.status || "Lưu hành" }
+}
+
+export function lookupDateError(filters: CardLookupFilters) {
+  if (filters.mode === "current") return ""
+  const valid = (day: string) => /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+    Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day &&
+    day >= "2026-09-01" && day <= maxDate
+  if (!valid(filters.end) || (filters.mode === "movement" && !valid(filters.start)))
+    return `Chọn ngày từ 01/09/2026 đến ${date(maxDate)}.`
+  if (filters.mode === "movement" && filters.start > filters.end)
+    return "Từ ngày phải trước hoặc bằng Đến ngày."
+  return ""
+}
+
+const lookupFields = ["mode", "keyword", "start", "end", "estate", "park", "type", "vehicle", "status", "group", "alert", "movement"] as const
+const lookupParam = (field: typeof lookupFields[number]) => `lookup${field[0].toUpperCase()}${field.slice(1)}`
+
+export function setCardLookupParams(params: URLSearchParams, filters: CardLookupFilters) {
+  for (const field of lookupFields) {
+    if (filters[field] && filters[field] !== defaultCardLookupFilters[field])
+      params.set(lookupParam(field), filters[field])
+  }
+}
+
+export function readCardLookupParams(params: URLSearchParams, reportFilters: Filters): CardLookupFilters {
+  const mode = params.get(lookupParam("mode"))
+  if (!mode) {
+    const selection = readReportLookupParams(params)
+    if (selection) return reportLookupFilters(reportFilters, selection)
+  }
+  const value = (field: typeof lookupFields[number]) => params.get(lookupParam(field)) || ""
+  const option = <T extends string>(choices: readonly T[], field: typeof lookupFields[number]) =>
+    choices.find((item) => item === value(field)) || ""
+  const estate = option(estates.map((item) => item.id), "estate")
+  const parks = estates.filter((item) => !estate || item.id === estate).flatMap((item) => item.parks)
+  const filters: CardLookupFilters = {
+    mode: mode === "snapshot" || mode === "movement" ? mode : "current",
+    keyword: value("keyword").slice(0, 100),
+    start: value("start") || defaults.start,
+    end: value("end") || defaults.end,
+    estate,
+    park: option(parks, "park"),
+    type: option(cardTypes, "type"),
+    vehicle: option(vehicles, "vehicle"),
+    status: option(lookupStatuses, "status"),
+    group: option(circulationGroups("Nhóm khách hàng"), "group"),
+    alert: option(cardAlertIds.map((id) => alertNames[id]), "alert"),
+    movement: option(movementKinds, "movement"),
+  }
+  return lookupDateError(filters) ? { ...filters, start: defaults.start, end: defaults.end } : filters
+}
+
+export function matchesCardKeyword(card: Card, query: string) {
+  return !query || [card.id, card.owner, card.plate, card.subscription, card.batch].some((value) =>
+    normalize(value).includes(query),
+  )
+}
+
+export function lookupCards(
+  filters: CardLookupFilters,
+  thresholds?: (estate: string) => Threshold,
+  currentCards: Card[] = [],
+): ReportLookupResult {
+  const current = filters.mode === "current"
+  const asOf = current ? today : filters.end
+  const keyword = normalize(filters.keyword.trim())
+  if (filters.mode === "movement") {
+    const { cards, events } = movementsInScope(filters, filters.movement, thresholds)
+    const matches = cards.filter((card) => matchesCardKeyword(card, keyword))
+    const ids = new Set(matches.map((card) => card.id))
+    return {
+      asOf,
+      period: `Từ ${date(filters.start)} đến hết ${date(filters.end)}`,
+      cards: matches,
+      events: keyword ? events.filter((event) => ids.has(event.cardId)) : events,
+    }
+  }
+  const { status, alert, group } = filters
+  const alertId = cardAlertIds.find((id) => alertNames[id] === alert)
+  const matchesStatus = (card: Card) => {
+    if (!status) return true
+    if (status === "Lưu hành") return isCirculating(card)
+    if (status === "Hết hạn" || status === "Đang sử dụng")
+      return isCirculating(card) && circulationStatus(card, asOf) === status
+    return card.status === status
+  }
+  return {
+    asOf,
+    period: current ? "Hiện tại" : `Chốt hết ngày ${date(asOf)}`,
+    events: null,
+    cards: (current ? currentCards : snapshot(asOf, thresholds)).filter((card) =>
+      inScope(card, filters) && matchesStatus(card) && matchesCardKeyword(card, keyword) &&
+      (!group || inCirculationGroup(card, "Nhóm khách hàng", group)) &&
+      (current || !alert || (alertId !== undefined && card.alerts.includes(alertId))),
+    ),
   }
 }
 
@@ -339,13 +504,7 @@ export function recentTrips(card: Card) {
       .slice(0, 10)
     return {
       day,
-      time:
-        card.alerts.includes(1) && i === 0
-          ? "10:30"
-          : i % 2
-            ? "08:15"
-            : "17:42",
-      violation: card.alerts.includes(1) && i === 0,
+      time: i % 2 ? "08:15" : "17:42",
     }
   }).filter((trip) => trip.day >= card.issued)
 }

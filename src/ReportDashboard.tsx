@@ -13,8 +13,9 @@ import {
 } from "lucide-react"
 import { Button, Heading, Overlay, Select } from "./ui"
 import { date, estates, fmt, percent } from "./data"
-import type { Card, Filters } from "./data"
-import type { managementReport } from "./report-model"
+import type { Filters } from "./data"
+import { circulationGroupings, openingSnapshotLabel, stockMetricLabels } from "./report-model"
+import type { CirculationGrouping, managementReport, ReportLookupSelection } from "./report-model"
 
 type Report = ReturnType<typeof managementReport>
 const palette = [
@@ -28,7 +29,7 @@ const palette = [
   "#669ca4",
   "#a38ca1",
 ]
-const movementLabels = ["Nhập mới", "Cấp ra", "Thu hồi", "Mất / hỏng"]
+const movementLabels = stockMetricLabels.slice(2, 6)
 
 function Details({
   title,
@@ -76,7 +77,7 @@ function Details({
               footer={
                 <>
                   <span className="report-data-hint">
-                    Bấm vào số liệu để xem danh sách thẻ liên quan.
+                    Bấm vào số liệu để mở trang Tra cứu thẻ.
                   </span>
                   <Button variant="primary" onClick={() => setOpen(false)}>
                     Đóng số liệu
@@ -99,17 +100,17 @@ export default function ReportDashboard({
   groupBy,
   onGroupBy,
   onMetric,
-  onCards,
+  onLookup,
   onSettings,
   stockDetails,
   circulationDetails,
 }: {
   data: Report
   filters: Filters
-  groupBy: string
-  onGroupBy: (value: string) => void
+  groupBy: CirculationGrouping
+  onGroupBy: (value: CirculationGrouping) => void
   onMetric: (index: number) => void
-  onCards: (title: string, cards: Card[]) => void
+  onLookup: (selection: ReportLookupSelection) => void
   onSettings: () => void
   stockDetails: ReactNode
   circulationDetails: ReactNode
@@ -130,7 +131,8 @@ export default function ReportDashboard({
   ]
     .filter(Boolean)
     .join(" · ")
-  const snapshotLabel = `Chốt ngày ${date(filters.end)} · ${scopeLabel}`
+  const closingLabel = `Chốt hết ngày ${date(filters.end)}`
+  const snapshotLabel = `${closingLabel} · ${scopeLabel}`
   return (
     <div className="management-report">
       <div className="report-period-note">
@@ -138,7 +140,6 @@ export default function ReportDashboard({
           <span className="report-live-dot" /> Kỳ {date(filters.start)} –{" "}
           {date(filters.end)}
         </span>
-        <span>Cơ cấu và cảnh báo chốt tại ngày {date(filters.end)}</span>
       </div>
       <div className="report-kpis">
         {[
@@ -148,7 +149,7 @@ export default function ReportDashboard({
             metric: 0,
             unit: "thẻ",
             icon: <Package size={19} />,
-            note: "Số thẻ sẵn sàng cấp trước kỳ",
+            note: openingSnapshotLabel(filters.start),
           },
           {
             label: "Tồn kho cuối kỳ",
@@ -156,7 +157,7 @@ export default function ReportDashboard({
             metric: 6,
             unit: "thẻ",
             icon: <Package size={19} />,
-            note: "Số thẻ sẵn sàng cấp tại ngày chốt",
+            note: closingLabel,
           },
           {
             label: "Thẻ lưu hành cuối kỳ",
@@ -164,7 +165,7 @@ export default function ReportDashboard({
             metric: 7,
             unit: "thẻ",
             icon: <CreditCard size={19} />,
-            note: "Đã cấp, chưa thu hồi",
+            note: closingLabel,
           },
           {
             label: "Mất / hỏng trong kỳ",
@@ -172,7 +173,7 @@ export default function ReportDashboard({
             metric: 5,
             unit: "lượt",
             icon: <TriangleAlert size={19} />,
-            note: "Số lần phát sinh trong kỳ",
+            note: `Phát sinh ${date(filters.start)} – ${date(filters.end)}`,
           },
         ].map((item, i) => (
           <Button
@@ -180,7 +181,7 @@ export default function ReportDashboard({
             className={`report-kpi ${i === 3 ? "report-kpi-warning" : ""}`}
             disabled={!item.value}
             onClick={() => onMetric(item.metric)}
-            aria-label={`${item.label}: ${fmt(item.value)} ${item.unit}. Xem chi tiết`}
+            aria-label={`${item.label}: ${fmt(item.value)} ${item.unit}. ${item.note}. Tra cứu thẻ`}
           >
             <span className="report-kpi-top">
               <span>{item.label}</span>
@@ -257,8 +258,7 @@ export default function ReportDashboard({
             <p className="chart-empty">Không có phát sinh trong kỳ đã chọn.</p>
           )}
           <p className="chart-caption">
-            Một thẻ có thể phát sinh nhiều lần. Chọn cột để xem các thẻ liên
-            quan.
+            Một thẻ có thể phát sinh nhiều lần. Chọn cột để tra cứu các lượt phát sinh.
           </p>
           <Details
             title="Chi tiết biến động kho thẻ"
@@ -273,14 +273,14 @@ export default function ReportDashboard({
             <div>
               <span className="report-eyebrow">02 / CƠ CẤU</span>
               <Heading>Cơ cấu thẻ lưu hành</Heading>
-              <p>Tại ngày {date(filters.end)}</p>
+              <p>{closingLabel}</p>
             </div>
             <Select
               aria-label="Phân loại cơ cấu thẻ"
               className="report-group-select"
               value={groupBy}
-              onChange={(e) => onGroupBy(e.target.value)}
-              options={["Loại thẻ", "Loại phương tiện", "Nhóm khách hàng"]}
+              onChange={(e) => onGroupBy(e.target.value as CirculationGrouping)}
+              options={[...circulationGroupings]}
             />
           </div>
           <div className="donut-layout">
@@ -321,12 +321,12 @@ export default function ReportDashboard({
                       tabIndex={0}
                       aria-label={`${group.label}: ${fmt(group.cards.length)} thẻ. Xem chi tiết`}
                       onClick={() =>
-                        onCards(`Lưu hành · ${group.label}`, group.cards)
+                        onLookup({ kind: "circulation", groupBy, group: group.label })
                       }
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault()
-                          onCards(`Lưu hành · ${group.label}`, group.cards)
+                          onLookup({ kind: "circulation", groupBy, group: group.label })
                         }
                       }}
                     />
@@ -353,7 +353,7 @@ export default function ReportDashboard({
                   className="donut-legend-row"
                   disabled={!group.cards.length}
                   onClick={() =>
-                    onCards(`Lưu hành · ${group.label}`, group.cards)
+                    onLookup({ kind: "circulation", groupBy, group: group.label })
                   }
                 >
                   <i style={{ background: palette[i % palette.length] }} />
@@ -390,7 +390,7 @@ export default function ReportDashboard({
                     aria-label={`${status.label}: ${fmt(status.cards.length)} thẻ`}
                     title={`${status.label}: ${fmt(status.cards.length)} thẻ`}
                     onClick={() =>
-                      onCards(`Lưu hành · ${status.label}`, status.cards)
+                      onLookup({ kind: "circulation", status: status.label })
                     }
                   />
                 ) : null,
@@ -403,7 +403,7 @@ export default function ReportDashboard({
                   variant="ghost"
                   disabled={!status.cards.length}
                   onClick={() =>
-                    onCards(`Lưu hành · ${status.label}`, status.cards)
+                    onLookup({ kind: "circulation", status: status.label })
                   }
                 >
                   <i
@@ -432,7 +432,7 @@ export default function ReportDashboard({
             <Heading>Cảnh báo cần rà soát</Heading>
             <p>
               <strong>{fmt(data.warned)} thẻ</strong> có ít nhất một cảnh báo
-              tại ngày {date(filters.end)}
+              đến hết ngày {date(filters.end)}
             </p>
           </div>
           <Button variant="link" onClick={onSettings}>
@@ -451,7 +451,7 @@ export default function ReportDashboard({
               variant="ghost"
               className="alert-bar-row"
               disabled={!alert.cards.length}
-              onClick={() => onCards(`Cảnh báo · ${alert.label}`, alert.cards)}
+              onClick={() => onLookup({ kind: "alert", id: alert.id })}
             >
               <span className="alert-bar-label">
                 <i style={{ background: palette[i] }} />
@@ -498,7 +498,7 @@ export default function ReportDashboard({
                         variant="link"
                         disabled={!alert.cards.length}
                         onClick={() =>
-                          onCards(`Cảnh báo · ${alert.label}`, alert.cards)
+                          onLookup({ kind: "alert", id: alert.id })
                         }
                       >
                         Xem danh sách <ArrowUpRight size={13} />

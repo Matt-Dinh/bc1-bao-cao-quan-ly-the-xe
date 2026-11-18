@@ -62,6 +62,7 @@ import {
 } from "./ui"
 import {
   alertNames,
+  cardAlertIds,
   cardTypes,
   columnNames,
   customerGroups,
@@ -88,18 +89,27 @@ import {
   parkingMenus, parkingRoles, shiftDay, siteById, vnToday,
 } from "./parking-model"
 import type { ParkingAccess, ParkingScreen, Role } from "./parking-model"
-import { operationMenus } from "./operations-model"
+import { operationMenus, seedOperations } from "./operations-model"
 import type { OperationScreen } from "./operations-model"
 import {
   cardHistory,
+  circulationGroups,
+  circulationStatus,
+  circulationStatuses,
   daysBetween,
+  defaultCardLookupFilters,
+  inCirculationGroup,
   lossBreakdown,
+  lookupCards,
   managementReport,
-  metricCards,
+  readCardLookupParams,
   recentTrips,
+  reportLookupFilters,
+  setCardLookupParams,
   snapshot,
   stockMetrics,
 } from "./report-model"
+import type { CardLookupFilters, CirculationGrouping, ReportLookupSelection } from "./report-model"
 
 const screenIcons = {
   stock: Warehouse,
@@ -115,17 +125,6 @@ const operationIcons = {
   handoffs: ArrowUpRight,
   lookup: Search,
   incidents: FileCheck2,
-}
-type Drill = {
-  title: string
-  ids: string[]
-  count: number
-  events: boolean
-  from: Screen
-  records: Card[]
-  occurrences: Record<string, number>
-  originFilters: Filters
-  scopePark?: string
 }
 interface LeaveTarget {
   report?: Screen
@@ -158,6 +157,7 @@ const getInitial = () => {
     f.end = maxDate
   if (
     !validDate(f.start) ||
+    f.start < "2026-09-01" ||
     f.start > f.end ||
     daysBetween(f.start, f.end) >= 31
   )
@@ -166,7 +166,7 @@ const getInitial = () => {
   if (!vehicles.includes(f.vehicle)) f.vehicle = ""
   if (!["Trong kho", "Đang hoạt động", "Khóa", "Mất / hỏng"].includes(f.status))
     f.status = ""
-  if (!["1", "2", "3", "4"].includes(f.alert)) f.alert = ""
+  if (!cardAlertIds.some((id) => String(id + 1) === f.alert)) f.alert = ""
   if (f.expiry && !validDate(f.expiry)) f.expiry = ""
   if (
     f.park &&
@@ -230,9 +230,14 @@ function App() {
     Math.max(1, Number(new URLSearchParams(location.search).get("page")) || 1),
   )
   const [pageSize, setPageSize] = useState(20)
-  const [groupBy, setGroupBy] = useState("Loại thẻ")
+  const [groupBy, setGroupBy] = useState<CirculationGrouping>("Loại thẻ")
   const [split, setSplit] = useState(false)
-  const [drill, setDrill] = useState<Drill | null>(null)
+  const [lookupFilters, setLookupFilters] = useState(() =>
+    operation === "lookup" ? readCardLookupParams(new URLSearchParams(location.search), initial.f) : null,
+  )
+  const [lookupFromReport, setLookupFromReport] = useState(() =>
+    operation === "lookup" && new URLSearchParams(location.search).get("lookupFrom") === "report",
+  )
   const [detail, setDetail] = useState<Card | null>(null)
   const [detailTab, setDetailTab] = useState("Thông tin thẻ")
   const [drawer, setDrawer] = useState<"filter" | "columns" | null>(null)
@@ -240,6 +245,7 @@ function App() {
   const [columnDraft, setColumnDraft] = useState(defaultColumns)
   const [toast, setToast] = useState("")
   const parkingModel = useParking(parkingAccess, setToast)
+  const [cardOperations, setCardOperations] = useState(seedOperations)
   const [notifications, setNotifications] = useState(false)
   const [help, setHelp] = useState(false)
   const [mobile, setMobile] = useState(false)
@@ -271,7 +277,7 @@ function App() {
   const [previewState, setPreviewState] = useState("ready")
   const previousSearch = useRef(search)
   const title = screens.find((s) => s.id === screen)!
-  const reportSection = screen === "cards" ? drill?.from || "stock" : screen
+  const reportSection = screen === "cards" ? "stock" : screen
 
   useEffect(() => {
     if (previousSearch.current === search) return
@@ -302,12 +308,16 @@ function App() {
     if (operation) p.set("module", operation)
     for (const [key, value] of Object.entries(applied))
       if (value && value !== defaults[(key as keyof Filters)]) p.set(key, value)
+    if (operation === "lookup" && lookupFilters) {
+      setCardLookupParams(p, lookupFilters)
+      if (lookupFromReport) p.set("lookupFrom", "report")
+    }
     if (query) p.set("q", query)
     if (page > 1) p.set("page", String(page))
     if (sortDesc || sortKey !== "id")
       p.set("sort", `${sortDesc ? "-" : ""}${sortKey}`)
     window.history.replaceState(null, "", `${window.location.pathname}?${p}`)
-  }, [screen, applied, query, page, sortKey, sortDesc, operation, parking, parkingParams])
+  }, [screen, applied, query, page, sortKey, sortDesc, operation, parking, parkingParams, lookupFilters, lookupFromReport])
   useEffect(() => {
     const changed = parkingDirty || (editing && JSON.stringify(edit) !== originalEdit)
     function leave(e: BeforeUnloadEvent) {
@@ -325,7 +335,7 @@ function App() {
       ? "Vui lòng chọn đầy đủ ngày báo cáo."
       : draft.end > maxDate
         ? `Chỉ có dữ liệu đến ngày ${date(maxDate)}.`
-        : draft.end < "2026-09-01"
+        : draft.end < "2026-09-01" || (screen === "stock" && draft.start < "2026-09-01")
           ? "Chưa có dữ liệu trước ngày 01/09/2026."
           : screen === "stock" && draft.start > draft.end
             ? "Ngày bắt đầu phải trước hoặc bằng ngày kết thúc."
@@ -345,28 +355,23 @@ function App() {
     [applied, thresholds, groupBy],
   )
   const warningCount = dashboard.warned
+  const lookupResult = useMemo(
+    () => operation === "lookup" && lookupFilters
+      ? lookupCards(lookupFilters, (estate) => currentThreshold(estate, lookupFilters.end), cardOperations.cards)
+      : null,
+    [operation, lookupFilters, thresholds, cardOperations.cards],
+  )
   const baseCards = useMemo(
-    () =>
-      filterCards(
-        drill?.records || reportCards,
-        drill?.events && applied.park === drill.scopePark
-          ? { ...applied, park: "" }
-          : applied,
-        query,
-        screen === "stock" || !!drill,
-      ),
-    [applied, query, drill, reportCards, screen],
+    () => filterCards(reportCards, applied, query, screen === "stock"),
+    [applied, query, reportCards, screen],
   )
   const listCards = useMemo(() => {
-    let rows = drill
-      ? baseCards.filter((c) => drill.ids.includes(c.id))
-      : baseCards
-    return [...rows].sort((a, b) => {
+    return [...baseCards].sort((a, b) => {
       const av = String(a[(sortKey as keyof Card)] ?? ""),
         bv = String(b[(sortKey as keyof Card)] ?? "")
       return av.localeCompare(bv, "vi", { numeric: true }) * (sortDesc ? -1 : 1)
     })
-  }, [baseCards, drill, sortKey, sortDesc])
+  }, [baseCards, sortKey, sortDesc])
   const selectedEstates = estates.filter(
     (e) =>
       (!applied.estate || applied.estate === e.id) &&
@@ -408,6 +413,8 @@ function App() {
       return
     }
     setOperation(id)
+    setLookupFilters(id === "lookup" ? defaultCardLookupFilters : null)
+    setLookupFromReport(false)
     setParking(null)
     setParkingDirty(false)
     setMobile(false)
@@ -430,7 +437,7 @@ function App() {
     setSearch("")
     setQuery("")
     setPage(1)
-    setDrill(null)
+    setLookupFilters(null)
     setReady(true)
     if (id !== "cards") {
       setDraft((v) => ({ ...v, status: "", alert: "", expiry: "" }))
@@ -457,6 +464,7 @@ function App() {
     setParkingParams((params) => applyParkingParams(preserve ? params : new URLSearchParams(), patch ?? {}))
     setParking(id)
     setOperation(null)
+    setLookupFilters(null)
     setOperationDirty(false)
     setParkingDirty(false)
     setMobile(false)
@@ -488,7 +496,6 @@ function App() {
     setApplied(defaults)
     setSearch("")
     setQuery("")
-    setDrill(null)
     setPage(1)
     setReady(true)
   }
@@ -496,75 +503,15 @@ function App() {
     setDetail(card)
     setDetailTab("Thông tin thẻ")
   }
-  function drillDown(
-    label: string,
-    rows: Card[],
-    count: number,
-    events = false,
-  ) {
-    setDrill({
-      title: label,
-      ids: rows.map((c) => c.id),
-      count,
-      events,
-      from: screen,
-      records: rows,
-      occurrences: Object.fromEntries(rows.map((c) => [c.id, 1])),
-      originFilters: applied,
-    })
-    setScreen("cards")
-    setSearch("")
-    setQuery("")
-    setPage(1)
+  function openReportLookup(selection: ReportLookupSelection) {
+    chooseOperation("lookup")
+    setLookupFilters(reportLookupFilters(applied, selection))
+    setLookupFromReport(true)
+    window.scrollTo(0, 0)
   }
-  function stockDrill(
-    eid: string,
-    index: number,
-    _value: number,
-    park = applied.park,
-  ) {
-    const f = {
-      ...applied,
-      estate: eid || applied.estate,
-      park,
-      status: "",
-      alert: "",
-      expiry: "",
-    }
-    const result = metricCards(f, index)
-    const labels = [
-      "Tồn kho đầu kỳ",
-      "Lưu hành đầu kỳ",
-      "Nhập mới",
-      "Cấp ra",
-      "Thu về",
-      "Mất / hỏng",
-      "Tồn kho cuối kỳ",
-      "Lưu hành cuối kỳ",
-    ]
-    setDrill({
-      title: `${labels[index]}${
-        park
-          ? ` · ${park}`
-          : eid
-            ? ` · ${estates.find((e) => e.id === eid)?.short}`
-            : ""
-      }`,
-      ids: result.cards.map((c) => c.id),
-      count: result.count,
-      events: [2, 3, 4, 5].includes(index),
-      from: screen,
-      records: result.cards,
-      occurrences: result.occurrences,
-      originFilters: applied,
-      scopePark: park,
-    })
-    setApplied(f)
-    setDraft(f)
-    setScreen("cards")
-    setSearch("")
-    setQuery("")
-    setPage(1)
+  function openWarehouseLookup(filters: CardLookupFilters) {
+    chooseOperation("lookup")
+    setLookupFilters(filters)
   }
   function stockValues(e: typeof estates[number]) {
     return stockMetrics({ ...applied, estate: e.id })
@@ -622,9 +569,9 @@ function App() {
         ".",
     )
   }
-  function currentThreshold(eid: string) {
+  function currentThreshold(eid: string, day = applied.end) {
     const t = thresholds[eid]
-    return t.effective <= applied.end ? t : initialThresholds[eid]
+    return t.effective <= day ? t : initialThresholds[eid]
   }
   async function exportReport() {
     if (exporting) return
@@ -684,7 +631,6 @@ function App() {
             "Loại thẻ": applied.type || "Tất cả",
             "Phương tiện": applied.vehicle || "Tất cả",
             "Từ khóa": query || "—",
-            "Điều kiện từ báo cáo": drill?.title || "—",
             "Người xuất": "Admin Local",
             "Thời điểm xuất": new Date(),
             Nguồn: "Dữ liệu minh họa",
@@ -787,10 +733,10 @@ function App() {
           selectedEstates.map((e) => ({
             "Khu đô thị": e.name,
             ...Object.fromEntries(
-              alertNames.map((a, i) => [
-                a,
+              cardAlertIds.map((id) => [
+                alertNames[id],
                 baseCards.filter(
-                  (c) => c.estate === e.id && c.alerts.includes(i),
+                  (c) => c.estate === e.id && c.alerts.includes(id),
                 ).length,
               ]),
             ),
@@ -804,10 +750,10 @@ function App() {
           cardRows(filterCards(reportCards, applied, query, true)),
         )
       } else if (screen === "alerts") {
-        alertNames.forEach((name, i) =>
+        cardAlertIds.forEach((id, i) =>
           add(
-            `${i + 1}-${["SapHetHan", "VanQuaLan", "KhongKhop", "KhongSuDung"][i]}`,
-            cardRows(baseCards.filter((c) => c.alerts.includes(i))),
+            `${i + 1}-${["SapHetHan", "KhongKhop", "KhongSuDung"][i]}`,
+            cardRows(baseCards.filter((c) => c.alerts.includes(id))),
           ),
         )
         add("TongHop", [
@@ -859,18 +805,7 @@ function App() {
             }),
           ),
         )
-      } else
-        add(
-          "DanhSachThe",
-          cardRows(listCards).map((row, i) =>
-            drill?.events
-              ? {
-                  ...row,
-                  "Số lần": drill.occurrences[listCards[i].id] || 1,
-                }
-              : row,
-          ),
-        )
+      } else add("DanhSachThe", cardRows(listCards))
       const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14)
       XLSX.writeFile(wb, `VParking_${screen}_${stamp}.xlsx`, {
         cellDates: true,
@@ -968,9 +903,9 @@ function App() {
               onChange={(e) => update("alert", e.target.value)}
               options={[
                 { value: "", label: "Tất cả cảnh báo" },
-                ...alertNames.map((n, i) => ({
-                  value: String(i + 1),
-                  label: n,
+                ...cardAlertIds.map((id) => ({
+                  value: String(id + 1),
+                  label: alertNames[id],
                 })),
               ]}
             />
@@ -988,7 +923,7 @@ function App() {
     </>
   )
   const cellNumber = (value: number, onClick: () => void, cls = "") => (
-    <Button variant="link" className={`number-link ${cls}`} onClick={onClick}>
+    <Button variant="link" className={`number-link ${cls}`} onClick={onClick} disabled={!value}>
       {fmt(value)}
     </Button>
   )
@@ -1086,7 +1021,7 @@ function App() {
                     <td key={i}>
                       {cellNumber(
                         n,
-                        () => stockDrill("", i, n),
+                        () => openReportLookup({ kind: "metric", index: i }),
                         i >= 6 ? "strong-number" : "",
                       )}
                     </td>
@@ -1141,7 +1076,7 @@ function App() {
                           <td key={i}>
                             {cellNumber(
                               n,
-                              () => stockDrill(e.id, i, n),
+                              () => openReportLookup({ kind: "metric", index: i, estate: e.id }),
                               i >= 6 ? "strong-number" : "",
                             )}
                           </td>
@@ -1182,9 +1117,7 @@ function App() {
                                     {n === null ? (
                                       <span className="dash">—</span>
                                     ) : (
-                                      cellNumber(n, () =>
-                                        stockDrill(e.id, i, n, p),
-                                      )
+                                      cellNumber(n, () => openReportLookup({ kind: "metric", index: i, estate: e.id, park: p }))
                                     )}
                                   </td>
                                 ))}
@@ -1264,22 +1197,9 @@ function App() {
     )
   }
   function renderCirculation() {
-    const categories =
-      groupBy === "Loại thẻ"
-        ? cardTypes
-        : groupBy === "Loại phương tiện"
-          ? vehicles
-          : [...customerGroups, "VIP và Vãng lai"]
+    const categories = circulationGroups(groupBy)
     const byCategory = (rows: Card[], cat: string) =>
-      rows.filter((c) =>
-        groupBy === "Loại thẻ"
-          ? c.type === cat
-          : groupBy === "Loại phương tiện"
-            ? c.vehicle === cat
-            : cat === "VIP và Vãng lai"
-              ? c.type !== "Thuê bao tháng"
-              : c.type === "Thuê bao tháng" && c.group === cat,
-      )
+      rows.filter((c) => inCirculationGroup(c, groupBy, cat))
     const row = (
       label: string,
       items: Card[],
@@ -1287,15 +1207,10 @@ function App() {
       child = false,
       estateId = "",
     ) => {
-      const activeRows = items.filter(
-        (c) =>
-          c.status === "Đang hoạt động" &&
-          (!c.expiry || c.expiry >= applied.end),
-      )
-      const lockedRows = items.filter((c) => c.status === "Khóa")
-      const expiredRows = items.filter(
-        (c) =>
-          c.status === "Đang hoạt động" && c.expiry && c.expiry < applied.end,
+      const estateRow = estateId && !child
+      const category = label === "Tổng cộng" || estateRow ? undefined : label
+      const statusRows = circulationStatuses.map((status) =>
+        items.filter((c) => circulationStatus(c, applied.end) === status),
       )
       return (
         <tr
@@ -1309,7 +1224,7 @@ function App() {
           }
         >
           <td>
-            {estateId ? (
+            {estateRow ? (
               <Button
                 variant="ghost"
                 className="estate-toggle"
@@ -1334,16 +1249,18 @@ function App() {
               </span>
             )}
           </td>
-          {[items, activeRows, lockedRows, expiredRows].map((rs, i) => (
+          {[items, ...statusRows].map((rs, i) => (
             <td key={i}>
               {cellNumber(
                 rs.length,
                 () =>
-                  drillDown(
-                    `${label} · ${["Đang lưu hành", "Đang sử dụng", "Khóa", "Hết hạn"][i]}`,
-                    rs,
-                    rs.length,
-                  ),
+                  openReportLookup({
+                    kind: "circulation",
+                    groupBy,
+                    group: category,
+                    status: i ? circulationStatuses[i - 1] : undefined,
+                    estate: estateId,
+                  }),
                 i === 0 ? "strong-number" : "",
               )}
             </td>
@@ -1351,7 +1268,7 @@ function App() {
           <td>
             <span className="activity-rate">
               {items.length
-                ? percent((activeRows.length / items.length) * 100)
+                ? percent((statusRows[0].length / items.length) * 100)
                 : "—"}
             </span>
           </td>
@@ -1434,6 +1351,7 @@ function App() {
                               byCategory(rs, cat),
                               rs.length,
                               true,
+                              e.id,
                             )
                           })}
                       </FragmentRows>
@@ -1652,52 +1570,13 @@ function App() {
     )
     return (
       <>
-        {!drill && (
-          <div className="drill-banner">
-            <Button variant="ghost" onClick={() => navigate("stock")}>
-              <ArrowLeft size={15} />
-              Quay lại báo cáo
-            </Button>
-            <span>Dữ liệu thẻ tại ngày chốt, dùng để đối chiếu báo cáo.</span>
-          </div>
-        )}
-        {drill && (
-          <div className="drill-banner">
-            <div>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setScreen(drill.from)
-                  setApplied(drill.originFilters)
-                  setDraft(drill.originFilters)
-                  setDrill(null)
-                  setSearch("")
-                  setQuery("")
-                  setPage(1)
-                }}
-              >
-                <ArrowLeft size={15} />
-                Quay lại báo cáo
-              </Button>
-              <span className="tool-separator" />
-              <span>Điều kiện từ báo cáo:</span>
-              <span className="filter-chip">
-                {drill.title}
-                <Button
-                  variant="ghost"
-                  aria-label="Bỏ điều kiện từ báo cáo"
-                  onClick={() => setDrill(null)}
-                >
-                  <X size={12} />
-                </Button>
-              </span>
-            </div>
-            <span>
-              {fmt(drill.ids.length)} thẻ
-              {drill.events ? ` · ${fmt(drill.count)} lần phát sinh` : ""}
-            </span>
-          </div>
-        )}
+        <div className="drill-banner">
+          <Button variant="ghost" onClick={() => navigate("stock")}>
+            <ArrowLeft size={15} />
+            Quay lại báo cáo
+          </Button>
+          <span>Dữ liệu thẻ tại ngày chốt, dùng để đối chiếu báo cáo.</span>
+        </div>
         <section className="panel cards-panel">
           <div className="table-toolbar">
             <div className="search-area">
@@ -1755,7 +1634,6 @@ function App() {
                         </Button>
                       </th>
                     ))}
-                    {drill?.events && <th>Số lần</th>}
                     <th />
                   </tr>
                 </thead>
@@ -1770,9 +1648,6 @@ function App() {
                         {visibleColumns.map((k) => (
                           <td key={k}>{cardCell(c, k)}</td>
                         ))}
-                        {drill?.events && (
-                          <td>{drill.occurrences[c.id] || 1}</td>
-                        )}
                         <td>
                           <Button
                             variant="ghost"
@@ -2394,11 +2269,17 @@ function App() {
         <main>
           <Operations
             screen={operation}
+            lookupResult={lookupResult}
+            lookupFilters={lookupFilters}
+            onLookupFilters={setLookupFilters}
+            onBackToReport={lookupFromReport ? () => navigate("stock") : undefined}
             focusCardId={operationFocus}
             onFocused={() => setOperationFocus(null)}
-            onLookup={() => chooseOperation("lookup")}
+            onLookup={openWarehouseLookup}
             onDirtyChange={setOperationDirty}
             onNotify={setToast}
+            sharedState={cardOperations}
+            onStateChange={setCardOperations}
           />
           {parking && <Parking key={`${parkingAccess.role}/${parkingAccess.estate}`} screen={parking} params={parkingParams}
             access={parkingAccess} model={parkingModel} update={updateParking} navigate={chooseParking}
@@ -2722,21 +2603,19 @@ function App() {
               renderCards()
             ) : screen === "settings" ? (
               renderSettings()
-            ) : (
+            ) : !operation && !parking ? (
               <ReportDashboard
                 data={dashboard}
                 filters={applied}
                 groupBy={groupBy}
                 onGroupBy={setGroupBy}
-                onMetric={(index) =>
-                  stockDrill("", index, dashboard.metrics[index])
-                }
-                onCards={(label, rows) => drillDown(label, rows, rows.length)}
+                onMetric={(index) => openReportLookup({ kind: "metric", index })}
+                onLookup={openReportLookup}
                 onSettings={() => navigate("settings")}
                 stockDetails={renderStock()}
                 circulationDetails={renderCirculation()}
               />
-            )}
+            ) : null}
             <footer className="page-footer">
               <span>
                 VParking CMS <span className="footer-dot">·</span>{" "}
@@ -2953,7 +2832,7 @@ function App() {
           </div>
           {detail.alerts.map((a) => (
             <div
-              className={`detail-alert ${a === 1 ? "detail-alert-danger" : ""}`}
+              className="detail-alert"
               key={a}
             >
               <TriangleAlert size={18} />
@@ -2962,13 +2841,11 @@ function App() {
                 <span>
                   {a === 0
                     ? `Thẻ hết hiệu lực vào ${date(detail.expiry)}. Vui lòng nhắc khách gia hạn.`
-                    : a === 1
-                      ? "Thẻ khóa lúc 12/10/2026 10:00 nhưng vẫn có lượt vào lúc 10:30 cùng ngày tại làn vào B1."
-                      : a === 2
-                        ? detail.plate === "—"
-                          ? "Chưa có biển số đăng ký và chưa gắn căn hộ cư dân."
-                          : "Biển đăng ký: 30A-123.45 · Camera: 30A-999.99 · 3 lượt không khớp."
-                        : `Không có lượt xe trong ${detail.unused} ngày. Lần sử dụng gần nhất: ${date(detail.lastTrip)}.`}
+                    : a === 2
+                      ? detail.plate === "—"
+                        ? "Chưa có biển số đăng ký và chưa gắn căn hộ cư dân."
+                        : "Biển đăng ký: 30A-123.45 · Camera: 30A-999.99 · 3 lượt không khớp."
+                      : `Không có lượt xe trong ${detail.unused} ngày. Lần sử dụng gần nhất: ${date(detail.lastTrip)}.`}
                 </span>
               </div>
             </div>
@@ -3013,9 +2890,7 @@ function App() {
                   [
                     "Lượt xe gần nhất",
                     detail.lastTrip
-                      ? `${date(detail.lastTrip)} ${
-                          detail.alerts.includes(1) ? "10:30" : "17:42"
-                        }`
+                      ? `${date(detail.lastTrip)} 17:42`
                       : "—",
                   ],
                   [
@@ -3120,9 +2995,7 @@ function App() {
                           : detail.plate}
                       </td>
                       <td>
-                        <Badge tone={trip.violation ? "red" : "green"}>
-                          {trip.violation ? "Qua làn khi đã khóa" : "Cho qua"}
-                        </Badge>
+                        <Badge tone="green">Cho qua</Badge>
                       </td>
                     </tr>
                   ))}

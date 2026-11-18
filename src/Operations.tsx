@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import CardLookupFilterPanel from "./CardLookupFilterPanel"
 import {
   ArrowLeft,
   ArrowRight,
@@ -40,6 +41,7 @@ import {
   Textarea,
 } from "./ui"
 import {
+  alertNames,
   cardTypes,
   cards,
   customerGroups,
@@ -51,7 +53,8 @@ import {
   vehicles,
 } from "./data"
 import type { Card } from "./data"
-import { cardHistory } from "./report-model"
+import { cardHistory, defaultCardLookupFilters, matchesCardKeyword, stockMetricLabels } from "./report-model"
+import type { CardEvent, CardLookupFilters, ReportLookupResult } from "./report-model"
 import {
   applyOperation,
   cardStatuses,
@@ -66,6 +69,7 @@ import type {
   OperationScreen,
   Subscription,
 } from "./operations-model"
+import type { OperationState } from "./operations-model"
 
 const parks = estates.flatMap((e) =>
   e.parks.map((park, i) => ({
@@ -92,6 +96,14 @@ const statusTone = (s: string) =>
         : "neutral"
 const maskedPhone = (p: string) =>
   p.includes("*") || p === "—" ? p : `${p.slice(0, 4)}****${p.slice(-3)}`
+const movementNames = {
+  import: stockMetricLabels[2],
+  issue: stockMetricLabels[3],
+  return: stockMetricLabels[4],
+  loss: stockMetricLabels[5],
+  lock: "Khóa thẻ",
+} satisfies Record<CardEvent["kind"], string>
+const eventTime = (event: CardEvent) => `${date(event.at.slice(0, 10))} ${event.at.slice(11, 16)}`
 interface ImportRow {
   id: string
   error: string
@@ -135,20 +147,34 @@ interface CardAction {
 }
 export default function Operations({
   screen,
+  lookupResult,
+  lookupFilters,
+  onLookupFilters,
+  onBackToReport,
   focusCardId,
   onFocused,
   onLookup,
   onDirtyChange,
   onNotify,
+  sharedState,
+  onStateChange,
 }: {
   screen: OperationScreen | null
+  lookupResult: ReportLookupResult | null
+  lookupFilters: CardLookupFilters | null
+  onLookupFilters: (filters: CardLookupFilters) => void
+  onBackToReport?: () => void
   focusCardId: string | null
   onFocused: () => void
-  onLookup: () => void
+  onLookup: (filters: CardLookupFilters) => void
   onDirtyChange: (dirty: boolean) => void
   onNotify: (text: string) => void
+  sharedState?: OperationState
+  onStateChange?: (state: OperationState) => void
 }) {
-  const [state, setState] = useState(seedOperations)
+  const [localState, setLocalState] = useState(seedOperations)
+  const state = sharedState ?? localState
+  const setState = onStateChange ?? setLocalState
   const [search, setSearch] = useState("")
   const [query, setQuery] = useState("")
   const [parkFilter, setParkFilter] = useState("")
@@ -182,6 +208,7 @@ export default function Operations({
   const fileRef = useRef<HTMLInputElement>(null)
   const lastScreen = useRef(screen)
   const formRef = useRef<HTMLDivElement>(null)
+  const reportLookup = lookupFilters?.mode !== "current" ? lookupResult : null
   useEffect(() => {
     const timer = setTimeout(() => {
       setQuery(search.trim())
@@ -242,7 +269,6 @@ export default function Operations({
       !filteredPark ||
       (c.estate === filteredPark.estate && c.park === filteredPark.park),
   )
-  const detail = state.cards.find((c) => c.id === detailId)
   const actCard = state.cards.find((c) => c.id === action?.cardId)
   const subscription = state.subscriptions.find(
     (s) => s.id === editor?.replacement,
@@ -671,16 +697,24 @@ export default function Operations({
     }
   }
   const q = normalize(query)
-  const visibleCards = scope.filter(
-    (c) =>
-      (!statusFilter || c.status === statusFilter) &&
-      (!typeFilter || c.type === typeFilter) &&
-      (!vehicleFilter || c.vehicle === vehicleFilter) &&
-      (!q ||
-        [c.id, c.owner, c.plate, c.subscription, c.batch].some((v) =>
-          normalize(v).includes(q),
-        )),
-  )
+  const visibleCards = lookupResult?.cards ?? scope.filter((c) =>
+        (!statusFilter || c.status === statusFilter) &&
+        (!typeFilter || c.type === typeFilter) &&
+        (!vehicleFilter || c.vehicle === vehicleFilter) && matchesCardKeyword(c, q),
+      )
+  let cardRows: { key: string; card: Card; event?: CardEvent }[]
+  if (reportLookup?.events) {
+    const byId = new Map(visibleCards.map((card) => [card.id, card]))
+    cardRows = reportLookup.events.flatMap((event, index) => {
+      const card = byId.get(event.cardId)
+      return card ? [{ key: `${event.cardId}:${index}`, card, event }] : []
+    })
+  } else {
+    cardRows = visibleCards.map((card) => ({ key: card.id, card }))
+  }
+  const detailRow = reportLookup ? cardRows.find((row) => row.key === detailId) : undefined
+  const detail = reportLookup ? detailRow?.card : state.cards.find((c) => c.id === detailId)
+  const detailEvent = detailRow?.event
   const subRows = state.subscriptions.filter(
     (s) =>
       scope.some((c) => c.id === s.cardId) &&
@@ -723,7 +757,7 @@ export default function Operations({
       }
     })
   const currentCount = isCardList
-    ? visibleCards.length
+    ? cardRows.length
     : screen === "subscriptions"
       ? subRows.length
       : screen === "imports"
@@ -740,12 +774,12 @@ export default function Operations({
   const badge = (c: Card) => (
     <Badge tone={statusTone(c.status)}>{c.status}</Badge>
   )
-  const cardLink = (c: Card) => (
+  const cardLink = (c: Card, key = c.id) => (
     <Button
       variant="link"
       className="card-id"
       onClick={() => {
-        setDetailId(c.id)
+        setDetailId(key)
         setDetailTab("Thông tin thẻ")
       }}
     >
@@ -796,7 +830,7 @@ export default function Operations({
       </div>
       <Heading level={3}>Không có kết quả phù hợp</Heading>
       <span className="muted">Thử thay đổi từ khóa hoặc điều kiện lọc.</span>
-      <Button
+      {screen !== "lookup" && <Button
         onClick={() => {
           setSearch("")
           setParkFilter("")
@@ -806,7 +840,7 @@ export default function Operations({
         }}
       >
         Xóa bộ lọc
-      </Button>
+      </Button>}
     </div>
   )
   const parkFilterControl = (
@@ -1002,14 +1036,28 @@ export default function Operations({
                 workbook(
                   screen,
                   isCardList
-                    ? visibleCards.map((c) => ({
+                    ? cardRows.map(({ card: c, event }) => ({
                         "Mã thẻ": c.id,
-                        "Kho bãi": c.park,
+                        "Kho bãi": event?.park ?? c.park,
                         "Loại thẻ": c.type,
                         "Phương tiện": c.vehicle,
                         "Chủ thẻ": c.owner,
                         "Biển số": c.plate,
-                        "Trạng thái": c.status,
+                        ...(event ? {
+                          "Thời điểm phát sinh": eventTime(event),
+                          "Nghiệp vụ": movementNames[event.kind],
+                          "Trạng thái trước": event.before?.status || "—",
+                          "Trạng thái sau": event.after.status,
+                        } : { "Trạng thái": c.status }),
+                        ...(reportLookup ? {
+                          "Khu đô thị": estates.find((e) => e.id === c.estate)?.name || "—",
+                          "Mốc tính": reportLookup.period,
+                          ...(!event ? {
+                            "Hiệu lực đến": date(c.expiry),
+                            "Nhóm khách hàng": c.group,
+                            "Cảnh báo": c.alerts.map((i) => alertNames[i]).join(", "),
+                          } : {}),
+                        } : {}),
                       }))
                     : screen === "incidents"
                       ? incidentRows.map((i) => ({
@@ -1038,6 +1086,7 @@ export default function Operations({
                           })),
                 )
               }
+              disabled={!!reportLookup && !currentCount}
             >
               <Download size={15} />
               Xuất danh sách
@@ -1072,6 +1121,17 @@ export default function Operations({
       </div>
       {!editor ? (
         <>
+          {screen === "lookup" && lookupFilters && (
+            <CardLookupFilterPanel
+              filters={lookupFilters}
+              onApply={(filters) => {
+                setPage(1)
+                setDetailId(null)
+                onLookupFilters(filters)
+              }}
+              onBack={onBackToReport}
+            />
+          )}
           {screen === "inventory" && (
             <>
               <div className="panel mb-5">{listToolbar}</div>
@@ -1147,7 +1207,15 @@ export default function Operations({
             </div>
           )}
           <section className="panel">
-            {screen !== "inventory" && listToolbar}
+            {screen === "lookup" ? (
+              <div className="op-table-toolbar">
+                <span className="count-text" aria-live="polite">
+                  <strong>{fmt(currentCount)}</strong> {lookupResult?.events ? "lượt phát sinh" : "thẻ"}
+                  {lookupResult?.events && ` · ${fmt(visibleCards.length)} thẻ`}
+                </span>
+                {reportLookup && <span className="muted">{reportLookup.period}</span>}
+              </div>
+            ) : screen !== "inventory" && listToolbar}
             {screen === "inventory" && (
               <>
                 <div className="panel-heading">
@@ -1204,7 +1272,15 @@ export default function Operations({
                               onClick={() => {
                                 setParkFilter(row.key)
                                 setPage(1)
-                                onLookup()
+                                onLookup({
+                                  ...defaultCardLookupFilters,
+                                  estate: row.estate,
+                                  park: row.park,
+                                  keyword: search.trim(),
+                                  type: typeFilter,
+                                  vehicle: vehicleFilter,
+                                  status: cardStatuses.find((status) => status === statusFilter) || "",
+                                })
                                 window.scrollTo({ top: 0 })
                               }}
                             >
@@ -1232,7 +1308,11 @@ export default function Operations({
                               "Phương tiện",
                               "Chủ thẻ",
                               "Biển số",
-                              "Trạng thái",
+                              ...(reportLookup?.events
+                                ? ["Thời điểm phát sinh", "Nghiệp vụ", "Trạng thái trước", "Trạng thái sau"]
+                                : reportLookup
+                                  ? ["Trạng thái tại mốc chốt", "Hiệu lực đến", "Cảnh báo"]
+                                  : ["Trạng thái"]),
                               "Thao tác",
                             ]
                           : screen === "imports"
@@ -1284,14 +1364,14 @@ export default function Operations({
                     </thead>
                     <tbody>
                       {isCardList
-                        ? slice(visibleCards).map((c) => (
-                            <tr key={c.id}>
+                        ? slice(cardRows).map(({ key, card: c, event }) => (
+                            <tr key={key}>
                               <td>
-                                {cardLink(c)}
+                                {cardLink(c, key)}
                                 <span className="estate-code">{c.batch}</span>
                               </td>
                               <td>
-                                {c.park}
+                                {event?.park ?? c.park}
                                 <span className="estate-code">
                                   {
                                     estates.find((e) => e.id === c.estate)
@@ -1311,20 +1391,37 @@ export default function Operations({
                               <td>{c.vehicle}</td>
                               <td>{c.owner}</td>
                               <td>{c.plate}</td>
-                              <td>{badge(c)}</td>
+                              {event ? (
+                                <>
+                                  <td>{eventTime(event)}</td>
+                                  <td>{movementNames[event.kind]}</td>
+                                  <td>{event.before?.status || "—"}</td>
+                                  <td><Badge tone={statusTone(event.after.status)}>{event.after.status}</Badge></td>
+                                </>
+                              ) : (
+                                <>
+                                  <td>{badge(c)}</td>
+                                  {reportLookup && (
+                                    <>
+                                      <td>{date(c.expiry)}</td>
+                                      <td>{c.alerts.map((i) => alertNames[i]).join(", ") || "—"}</td>
+                                    </>
+                                  )}
+                                </>
+                              )}
                               <td>
                                 <div className="op-row-actions">
                                   <Button
                                     variant="ghost"
                                     aria-label={`Chi tiết ${c.id}`}
                                     onClick={() => {
-                                      setDetailId(c.id)
+                                      setDetailId(key)
                                       setDetailTab("Thông tin thẻ")
                                     }}
                                   >
                                     <ChevronRight size={15} />
                                   </Button>
-                                  {c.status === "Đang hoạt động" && (
+                                  {!reportLookup && c.status === "Đang hoạt động" && (
                                     <Button
                                       variant="ghost"
                                       title="Khóa thẻ"
@@ -1334,7 +1431,7 @@ export default function Operations({
                                       <LockKeyhole size={14} />
                                     </Button>
                                   )}
-                                  {c.status === "Khóa" && (
+                                  {!reportLookup && c.status === "Khóa" && (
                                     <Button
                                       variant="ghost"
                                       title="Mở khóa"
@@ -1344,7 +1441,7 @@ export default function Operations({
                                       <UnlockKeyhole size={14} />
                                     </Button>
                                   )}
-                                  {["Đang hoạt động", "Khóa"].includes(
+                                  {!reportLookup && ["Đang hoạt động", "Khóa"].includes(
                                     c.status,
                                   ) && (
                                     <Button
@@ -1555,7 +1652,7 @@ export default function Operations({
               ))}
             {screen !== "inventory" && footer}
           </section>
-          {screen === "lookup" && (
+          {screen === "lookup" && !reportLookup && (
             <div className="under-table-note">
               <FileCheck2 size={14} />
               Thu hồi phải kiểm tra vật lý: thẻ đạt về đúng kho bãi; thẻ hỏng
@@ -2397,8 +2494,8 @@ export default function Operations({
       {detail && (
         <Overlay
           wide
-          title="Thông tin & thao tác thẻ"
-          subtitle="Dữ liệu vận hành trong phiên hiện tại"
+          title={reportLookup ? "Thông tin thẻ" : "Thông tin & thao tác thẻ"}
+          subtitle={reportLookup ? `Thông tin thẻ tại ngày ${date(reportLookup.asOf)}` : "Dữ liệu vận hành trong phiên hiện tại"}
           onClose={() => setDetailId(null)}
           footer={
             <>
@@ -2406,24 +2503,24 @@ export default function Operations({
                 <Warehouse size={14} />
                 Kho quản lý: {detail.park}
               </span>
-              {detail.status === "Đang hoạt động" && (
+              {!reportLookup && detail.status === "Đang hoạt động" && (
                 <Button onClick={() => openAction("lock", detail)}>
                   <LockKeyhole size={14} />
                   Khóa
                 </Button>
               )}
-              {detail.status === "Khóa" && (
+              {!reportLookup && detail.status === "Khóa" && (
                 <Button onClick={() => openAction("unlock", detail)}>
                   <UnlockKeyhole size={14} />
                   Mở khóa
                 </Button>
               )}
-              {detail.status !== "Mất / hỏng" && (
+              {!reportLookup && detail.status !== "Mất / hỏng" && (
                 <Button onClick={() => openAction("incident", detail)}>
                   Lập biên bản
                 </Button>
               )}
-              {["Đang hoạt động", "Khóa"].includes(detail.status) && (
+              {!reportLookup && ["Đang hoạt động", "Khóa"].includes(detail.status) && (
                 <Button
                   variant="primary"
                   onClick={() => openAction("return", detail)}
@@ -2448,6 +2545,14 @@ export default function Operations({
             </div>
             {badge(detail)}
           </div>
+          {detailEvent && (
+            <div className="op-inline-note">
+              <History size={16} />
+              <span>
+                <strong>{movementNames[detailEvent.kind]}</strong> · {eventTime(detailEvent)} · {detailEvent.park} · {detailEvent.before?.status || "Chưa nhập kho"} → {detailEvent.after.status}
+              </span>
+            </div>
+          )}
           <div className="detail-tabs">
             {["Thông tin thẻ", "Lịch sử thao tác"].map((t) => (
               <Button
@@ -2475,6 +2580,10 @@ export default function Operations({
                 ["Số điện thoại", detail.phone],
                 ["Mã thuê bao", detail.subscription || "—"],
                 ["Hiệu lực đến", date(detail.expiry)],
+                ...(reportLookup ? [
+                  ["Nhóm khách hàng", detail.group],
+                  ["Cảnh báo", detail.alerts.map((i) => alertNames[i]).join(", ") || "—"],
+                ] : []),
               ].map(([l, v]) => (
                 <div key={l}>
                   <span>{l}</span>
@@ -2485,8 +2594,8 @@ export default function Operations({
           ) : (
             <div className="timeline">
               {[
-                ...state.activity.filter((a) => a.cardId === detail.id),
-                ...cardHistory(detail, today).map((a) => ({
+                ...(reportLookup ? [] : state.activity.filter((a) => a.cardId === detail.id)),
+                ...cardHistory(detail, reportLookup?.asOf ?? today).map((a) => ({
                   ...a,
                   title: a.name,
                 })),

@@ -44,6 +44,15 @@
 .op-rule > .button { margin-left: auto; }
 .op-rule-danger { color: var(--color-brand); background: var(--color-brand-soft); }
 .op-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 20px; }
+.filter-grid.lookup-filter-primary { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.lookup-filter-row { margin-top: 12px; }
+.lookup-filter-more, .lookup-filter-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.lookup-filter-more .filter-chip .button { padding: 1px; min-height: 20px; }
+.lookup-filter-footer > .button-primary { margin-left: auto; }
+.lookup-filter-error { margin-top: 10px; color: #b93a48; font-size: 11px; }
+@media (max-width: 540px) {
+  .filter-grid.lookup-filter-primary { grid-template-columns: minmax(0, 1fr); }
+}
 .op-list-filters { display: flex; align-items: center; gap: 9px; }
 .op-list-filters .select-wrap { width: 150px; }
 .op-list-filters .select-wrap:first-child { width: 190px; }

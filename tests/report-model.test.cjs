@@ -15,6 +15,13 @@ const {
   cardHistory,
   lossBreakdown,
   managementReport,
+  openingSnapshotLabel,
+  lookupCards,
+  lookupDateError,
+  defaultCardLookupFilters,
+  readCardLookupParams,
+  reportLookupFilters,
+  setCardLookupParams,
 } = require("/tmp/vparking-model-tests/report-model.js")
 
 test("unified report charts reconcile with the ledger and exclusive status groups", () => {
@@ -115,6 +122,77 @@ test("each drilldown matches the displayed count and exact occurrences", () => {
   assert.equal(issued.count, 80)
   assert.equal(issued.cards.length, 79)
 })
+test("report links preserve the clicked scope and each repeated event on reload", () => {
+  const scope = { ...defaults, estate: "A", park: estates[0].parks[0] }
+  for (const index of [0, 2, 3, 4, 5, 6, 7]) {
+    const params = new URLSearchParams()
+    const preset = reportLookupFilters(defaults, { kind: "metric", index, estate: scope.estate, park: scope.park })
+    setCardLookupParams(params, preset)
+    const filters = readCardLookupParams(params, defaults)
+    const lookup = lookupCards(filters)
+    const expected = metricCards(scope, index)
+    assert.equal(filters.park, scope.park)
+    assert.equal((lookup.events || lookup.cards).length, expected.count)
+    if (index === 3) {
+      assert.equal(lookup.events.length, 32)
+      assert.equal(lookup.cards.length, 31)
+      assert.ok(lookup.events.every((event) => event.kind === "issue" && event.park === scope.park))
+    }
+  }
+  assert.equal(openingSnapshotLabel(defaults.start), "Chốt hết ngày 30/09/2026")
+  assert.equal(openingSnapshotLabel("2026-09-01"), "Số dư đầu ngày 01/09/2026")
+})
+
+test("report lookup matches circulation groups, usage status and alerts", () => {
+  const selection = { kind: "circulation", groupBy: "Nhóm khách hàng", group: "Cư dân", status: "Hết hạn", estate: "A" }
+  const params = new URLSearchParams()
+  setCardLookupParams(params, reportLookupFilters(defaults, selection))
+  const report = managementReport({ ...defaults, estate: "A" }, undefined, selection.groupBy)
+  const expiredIds = new Set(report.statuses.find((item) => item.label === selection.status).cards.map((card) => card.id))
+  const expected = report.groups.find((item) => item.label === selection.group).cards.filter((card) => expiredIds.has(card.id))
+  assert.deepEqual(lookupCards(readCardLookupParams(params, defaults)).cards, expected)
+  const applied = { ...defaults, estate: "B", end: "2026-10-14" }
+  managementReport(applied).alerts.forEach(({ cards, id }) => {
+    assert.deepEqual(lookupCards(reportLookupFilters(applied, { kind: "alert", id })).cards, cards)
+  })
+})
+
+test("lookup filters can broaden and change the report selection independently", () => {
+  const report = { ...defaults, estate: "A", park: estates[0].parks[0], type: "Thuê bao tháng" }
+  const preset = reportLookupFilters(report, { kind: "metric", index: 3 })
+  assert.equal(preset.movement, "issue")
+  const edited = { ...preset, estate: "", park: "", type: "", movement: "return" }
+  const params = new URLSearchParams()
+  setCardLookupParams(params, edited)
+  const restored = readCardLookupParams(params, report)
+  assert.deepEqual(restored, edited)
+  assert.equal(lookupCards(restored).events.length, metricCards(defaults, 4).count)
+  assert.equal(report.estate, "A")
+  assert.equal(report.type, "Thuê bao tháng")
+  assert.equal(lookupDateError({ ...edited, start: "2026-10-20", end: "2026-10-19" }), "Từ ngày phải trước hoặc bằng Đến ngày.")
+  const all = lookupCards({ ...edited, movement: "" }).events
+  assert.equal(all.length, stockMetrics(defaults).slice(2, 6).reduce((total, value) => total + value, 0))
+})
+
+test("unified lookup uses the current cards and preserves shared filters across modes", () => {
+  assert.deepEqual(readCardLookupParams(new URLSearchParams(), defaults), defaultCardLookupFilters)
+  const report = { ...defaults, estate: "A", park: estates[0].parks[0] }
+  const filters = reportLookupFilters(report, { kind: "metric", index: 3 })
+  const issued = lookupCards(filters)
+  const repeatedCard = issued.cards.find((card) =>
+    issued.events.filter((event) => event.cardId === card.id).length > 1,
+  )
+  const movement = { ...filters, keyword: repeatedCard.id }
+  assert.equal(lookupCards(movement).events.length, 2)
+  const current = { ...movement, mode: "current", movement: "", status: "Khóa" }
+  const params = new URLSearchParams()
+  setCardLookupParams(params, current)
+  const restored = readCardLookupParams(params, defaults)
+  const changedCard = { ...repeatedCard, status: "Khóa" }
+  assert.deepEqual(restored, current)
+  assert.deepEqual(lookupCards(restored, undefined, [changedCard]).cards, [changedCard])
+  assert.equal(lookupCards({ ...restored, status: "Trong kho" }, undefined, [changedCard]).cards.length, 0)
+})
 test("parking rows and vehicle/type filters remain additive", () => {
   for (const estate of estates) {
     const totals = Array(8).fill(0)
@@ -190,9 +268,11 @@ test("M2 classifications and M3 alerts match the same closing snapshot", () => {
     18,
   )
   assert.deepEqual(
-    [0, 1, 2, 3].map((a) => rows.filter((c) => c.alerts.includes(a)).length),
-    [2, 1, 2, 1],
+    managementReport(defaults).alerts.map(({ id, cards }) => [id, cards.length]),
+    [[0, 2], [2, 2], [3, 1]],
   )
+  assert.ok(rows.every((card) => !card.alerts.includes(1)))
+  assert.equal(readCardLookupParams(new URLSearchParams("alertGroup=1"), defaults).alert, "")
 })
 test("alert thresholds affect their actual underlying rules", () => {
   const rows = snapshot(defaults.end, () => ({
