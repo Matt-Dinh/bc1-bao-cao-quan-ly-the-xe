@@ -1,6 +1,6 @@
-import { useState } from "react"
-import { ArrowLeft, ListFilter, Search, X } from "lucide-react"
-import { alertNames, cardAlertIds, cardTypes, estates, maxDate, vehicles } from "./data"
+import { useEffect, useState } from "react"
+import { ArrowLeft, Info, ListFilter, Search } from "lucide-react"
+import { alertNames, cardAlertIds, cardTypes, date, estates, maxDate, today, vehicles } from "./data"
 import ReportPeriodFields from "./ReportPeriodFields"
 import {
   circulationGroups,
@@ -14,11 +14,6 @@ import type { CardLookupFilters } from "./report-model"
 import { Button, Field, Form, Input, Select } from "./ui"
 
 const firstReportDate = "2026-09-01"
-const scopeKeys = ["keyword", "estate", "park", "type", "vehicle"] as const
-type Scope = Pick<CardLookupFilters, typeof scopeKeys[number]>
-const filterScope = ({ keyword, estate, park, type, vehicle }: CardLookupFilters): Scope =>
-  ({ keyword, estate, park, type, vehicle })
-
 function selectFilter<T extends string>(
   label: string,
   value: T,
@@ -44,59 +39,31 @@ export default function CardLookupFilterPanel({
   onApply: (filters: CardLookupFilters) => void
   onBack?: () => void
 }) {
-  const [movements, setMovements] = useState(filters.mode === "movement")
-  const [scope, setScope] = useState(() => filterScope(filters))
-  const [cardView, setCardView] = useState({
-    day: filters.mode === "snapshot" ? filters.end : "",
-    status: filters.status,
-    group: filters.group,
-    alert: filters.alert,
-  })
-  const [movementView, setMovementView] = useState(() => {
-    const initial = filters.mode === "movement" ? filters : defaultCardLookupFilters
-    return { start: initial.start, end: initial.end, movement: initial.movement }
-  })
-
-  function buildFilters(showMovements: boolean): CardLookupFilters {
-    const common = { ...defaultCardLookupFilters, ...scope }
-    if (showMovements) return { ...common, ...movementView, mode: "movement" }
-    return {
-      ...common,
-      mode: cardView.day ? "snapshot" : "current",
-      end: cardView.day || common.end,
-      status: cardView.status,
-      group: cardView.group,
-      alert: cardView.day ? cardView.alert : "",
-    }
-  }
-
-  const draft = buildFilters(movements)
+  const [draft, setDraft] = useState(filters)
+  useEffect(() => setDraft(filters), [filters])
+  const movements = draft.mode === "movement"
+  const update = (patch: Partial<CardLookupFilters>) => setDraft((current) => ({ ...current, ...patch }))
   const error = lookupDateError(draft)
-  const viewKeys = movements ? ["start", "end", "movement"] as const : ["end", "status", "group", "alert"] as const
-  const pending = draft.mode !== filters.mode || [...scopeKeys, ...viewKeys].some((key) => draft[key] !== filters[key])
-  const parks = [...new Set(estates.filter((estate) => !scope.estate || estate.id === scope.estate)
+  const pending = Object.keys(draft).some((key) => draft[key as keyof CardLookupFilters] !== filters[key as keyof CardLookupFilters])
+  const parks = [...new Set(estates.filter((estate) => !draft.estate || estate.id === draft.estate)
     .flatMap((estate) => estate.parks))]
 
-  function changeView(showMovements: boolean) {
-    if (showMovements === movements) return
-    setMovements(showMovements)
-    const next = buildFilters(showMovements)
-    if (!lookupDateError(next)) onApply(next)
-  }
-
   function clear() {
-    const emptyScope = filterScope(defaultCardLookupFilters)
-    setScope(emptyScope)
-    if (movements) setMovementView((current) => ({ ...current, movement: "" }))
-    else setCardView((current) => ({ ...current, status: "", group: "", alert: "" }))
-    if (!error) onApply({ ...draft, ...emptyScope, status: "", group: "", alert: "", movement: "" })
+    const cleared: CardLookupFilters = {
+      ...defaultCardLookupFilters,
+      start: filters.start,
+      end: filters.end,
+      mode: filters.mode === "current" ? "current" : "snapshot",
+    }
+    setDraft(cleared)
+    onApply(cleared)
   }
 
   return (
     <Form className="panel filter-panel lookup-filter-panel" aria-label="Bộ lọc Tra cứu thẻ"
       onSubmit={(event) => {
         event.preventDefault()
-        if (!error) onApply(draft)
+        if (!error) onApply(movements ? draft : { ...draft, movement: "" })
       }}>
       <div className="filter-heading">
         <span>
@@ -106,63 +73,58 @@ export default function CardLookupFilterPanel({
         </span>
         <Button variant="ghost" onClick={clear}>Xóa bộ lọc</Button>
       </div>
-      <div className="lookup-view-switch" role="group" aria-label="Nội dung tra cứu">
-        <Button variant="ghost" aria-pressed={!movements} onClick={() => changeView(false)}>Danh sách thẻ</Button>
-        <Button variant="ghost" aria-pressed={movements} onClick={() => changeView(true)}>Biến động thẻ</Button>
-      </div>
       <div className="filter-grid lookup-filter-primary">
         <Field label="Tìm thẻ">
           <Input type="search" aria-label="Tìm thẻ" maxLength={100}
             placeholder="Mã thẻ, chủ thẻ, biển số, mã thuê bao…"
-            value={scope.keyword} onChange={(event) => setScope({ ...scope, keyword: event.target.value })} />
+            value={draft.keyword} onChange={(event) => update({ keyword: event.target.value })} />
         </Field>
-        {!movements && (
-          <div className="lookup-date-control">
-            <Field label="Ngày chốt" error={error || undefined}>
-              <Input type="date" aria-label="Ngày chốt" aria-description="Để trống để xem trạng thái hiện tại."
-                placeholder="Hiện tại" value={cardView.day}
-                min={firstReportDate} max={maxDate}
-                onChange={(event) => setCardView({ ...cardView, day: event.target.value })} />
-            </Field>
-            {cardView.day && (
-              <Button variant="ghost" aria-label="Xóa ngày chốt" title="Trở về hiện tại"
-                onClick={() => setCardView({ ...cardView, day: "", alert: "" })}><X size={15} /></Button>
-            )}
-          </div>
-        )}
-        {movements && (
-          <Field label="Nghiệp vụ">
-            <Select aria-label="Nghiệp vụ" value={movementView.movement}
-              options={[
-                { value: "", label: "Tất cả nghiệp vụ" },
-                ...movementKinds.map((value, index) => ({ value, label: stockMetricLabels[index + 2] })),
-              ]}
-              onChange={(event) => setMovementView({ ...movementView, movement: event.target.value as CardLookupFilters["movement"] })} />
-          </Field>
-        )}
+        <Field label="Loại biến động">
+          <Select aria-label="Loại biến động" value={movements ? draft.movement : "cards"}
+            options={[
+              { value: "cards", label: "Không lọc biến động" },
+              { value: "", label: "Tất cả biến động" },
+              ...movementKinds.map((value, index) => ({ value, label: stockMetricLabels[index + 2] })),
+            ]}
+            onChange={(event) => {
+              const value = event.target.value
+              update(value === "cards"
+                ? { mode: draft.start === today && draft.end === today ? "current" : "snapshot", movement: "" }
+                : { mode: "movement", movement: value as CardLookupFilters["movement"] })
+            }} />
+        </Field>
       </div>
       <div className="filter-grid lookup-filter-row">
         <Field label="Khu đô thị">
-          <Select aria-label="Khu đô thị" value={scope.estate}
+          <Select aria-label="Khu đô thị" value={draft.estate}
             options={[{ value: "", label: "Tất cả khu đô thị" }, ...estates.map(({ id, name }) => ({ value: id, label: name }))]}
-            onChange={(event) => setScope({ ...scope, estate: event.target.value, park: "" })} />
+            onChange={(event) => update({ estate: event.target.value, park: "" })} />
         </Field>
-        {selectFilter("Bãi xe", scope.park, (park) => setScope({ ...scope, park }), "Tất cả bãi xe", parks)}
-        {selectFilter("Loại thẻ", scope.type, (type) => setScope({ ...scope, type }), "Tất cả loại thẻ", cardTypes)}
-        {selectFilter("Phương tiện", scope.vehicle, (vehicle) => setScope({ ...scope, vehicle }), "Tất cả phương tiện", vehicles)}
+        {selectFilter("Bãi xe", draft.park, (park) => update({ park }), "Tất cả bãi xe", parks)}
+        {selectFilter("Loại thẻ", draft.type, (type) => update({ type }), "Tất cả loại thẻ", cardTypes)}
+        {selectFilter("Phương tiện", draft.vehicle, (vehicle) => update({ vehicle }), "Tất cả phương tiện", vehicles)}
       </div>
-      {movements ? (
-        <div className="filter-second-row">
-          <ReportPeriodFields period={movementView} min={firstReportDate} max={maxDate} error={error}
-            onChange={(period) => setMovementView((current) => ({ ...current, ...period }))} />
+      <div className="filter-grid lookup-filter-row">
+        {selectFilter("Trạng thái", draft.status, (status) => update({ status }), "Tất cả trạng thái", lookupStatuses)}
+        {selectFilter("Nhóm khách hàng", draft.group, (group) => update({ group }), "Tất cả nhóm khách hàng", circulationGroups("Nhóm khách hàng"))}
+        {selectFilter("Cảnh báo", draft.alert, (alert) => update({ alert }), "Tất cả cảnh báo", cardAlertIds.map((id) => alertNames[id]))}
+      </div>
+      <div className="lookup-time-section">
+        <div className="lookup-time-fields">
+          <ReportPeriodFields period={draft} min={firstReportDate} max={maxDate} inputMax={today} error={error}
+            onChange={(period) => update({ ...period, mode: movements ? "movement"
+              : period.start === today && period.end === today ? "current" : "snapshot" })} />
         </div>
-      ) : (
-        <div className="filter-grid lookup-filter-row">
-          {selectFilter("Trạng thái", cardView.status, (status) => setCardView({ ...cardView, status }), "Tất cả trạng thái", lookupStatuses)}
-          {selectFilter("Nhóm khách hàng", cardView.group, (group) => setCardView({ ...cardView, group }), "Tất cả nhóm khách hàng", circulationGroups("Nhóm khách hàng"))}
-          {cardView.day && selectFilter("Cảnh báo", cardView.alert, (alert) => setCardView({ ...cardView, alert }), "Tất cả cảnh báo", cardAlertIds.map((id) => alertNames[id]))}
-        </div>
-      )}
+        <p className="lookup-time-hint" id="lookup-time-hint">
+          <Info size={13} />
+          <span>{movements
+            ? "Biến động tính trong kỳ; trạng thái, nhóm khách hàng và cảnh báo xét tại ngày Đến ngày. Một thẻ có thể phát sinh nhiều lần."
+            : error ? "Chọn kỳ báo cáo hợp lệ để xem trạng thái thẻ."
+            : draft.mode === "current"
+              ? "Hai ngày cùng là hôm nay: xem trạng thái hiện tại. Chọn hai ngày trùng nhau để tra cứu một ngày khác."
+              : `Trạng thái và cảnh báo xét tại hết ngày ${date(draft.end)}; mỗi thẻ một dòng. Chọn hai ngày cùng là hôm nay để xem trạng thái hiện tại.`}</span>
+        </p>
+      </div>
       <div className="lookup-filter-footer">
         {onBack && <Button variant="ghost" onClick={onBack}><ArrowLeft size={14} /> Quay lại báo cáo</Button>}
         <Button variant="primary" type="submit" disabled={!!error}><Search size={14} /> Áp dụng</Button>

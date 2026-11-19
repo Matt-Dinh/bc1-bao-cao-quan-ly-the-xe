@@ -5,6 +5,7 @@ const {
   estates,
   cardTypes,
   vehicles,
+  today,
 } = require("/tmp/vparking-model-tests/data.js")
 const {
   stockMetrics,
@@ -17,6 +18,7 @@ const {
   managementReport,
   openingSnapshotLabel,
   lookupCards,
+  lookupSnapshotDay,
   lookupDateError,
   defaultCardLookupFilters,
   readCardLookupParams,
@@ -184,7 +186,7 @@ test("unified lookup uses the current cards and preserves shared filters across 
   )
   const movement = { ...filters, keyword: repeatedCard.id }
   assert.equal(lookupCards(movement).events.length, 2)
-  const current = { ...movement, mode: "current", movement: "", status: "Khóa" }
+  const current = { ...movement, mode: "current", start: today, end: today, movement: "", status: "Khóa" }
   const params = new URLSearchParams()
   setCardLookupParams(params, current)
   const restored = readCardLookupParams(params, defaults)
@@ -192,6 +194,150 @@ test("unified lookup uses the current cards and preserves shared filters across 
   assert.deepEqual(restored, current)
   assert.deepEqual(lookupCards(restored, undefined, [changedCard]).cards, [changedCard])
   assert.equal(lookupCards({ ...restored, status: "Trong kho" }, undefined, [changedCard]).cards.length, 0)
+})
+
+test("stock drilldowns use a single snapshot day or the full movement period and retain scope on reload", () => {
+  for (const estate of estates) for (const park of ["", ...estate.parks]) {
+    const report = { ...defaults, start: "2026-10-05", end: "2026-10-20", estate: estate.id, park,
+      type: "Thuê bao tháng", vehicle: "Xe máy" }
+    for (let index = 0; index < 8; index++) {
+      const preset = reportLookupFilters(report, { kind: "metric", index })
+      const movement = index >= 2 && index <= 5
+      const day = index < 2 ? "2026-10-04" : report.end
+      assert.equal(preset.start, movement ? report.start : day)
+      assert.equal(preset.end, day)
+      assert.equal(lookupDateError(preset), "")
+      const params = new URLSearchParams()
+      setCardLookupParams(params, preset)
+      const restored = readCardLookupParams(params, report)
+      assert.deepEqual(restored, preset)
+      const result = lookupCards(restored)
+      const expected = metricCards(report, index)
+      assert.equal((result.events || result.cards).length, expected.count)
+      assert.deepEqual(result.cards.map((card) => card.id), expected.cards.map((card) => card.id))
+      assert.equal(result.asOf, index < 2 ? "2026-10-04" : report.end)
+    }
+  }
+})
+
+test("circulation and alert drilldowns retain their category, status, scope and period", () => {
+  for (const groupBy of ["Loại thẻ", "Loại phương tiện", "Nhóm khách hàng"]) {
+    for (const estate of estates) {
+      const report = { ...defaults, start: "2026-10-03", end: "2026-10-24", estate: estate.id,
+        park: estate.parks[0], type: groupBy === "Loại thẻ" ? "" : "Thuê bao tháng",
+        vehicle: groupBy === "Loại phương tiện" ? "" : "Ô tô" }
+      const data = managementReport(report, undefined, groupBy)
+      const selections = [
+        ...data.groups.flatMap((group) => [undefined, ...data.statuses.map((status) => status.label)]
+          .map((status) => ({ selection: { kind: "circulation", groupBy, group: group.label, status },
+            expected: group.cards.filter((card) => !status ||
+              data.statuses.find((row) => row.label === status).cards.some((row) => row.id === card.id)) }))),
+        ...data.statuses.map((status) => ({ selection: { kind: "circulation", status: status.label }, expected: status.cards })),
+        ...data.alerts.map((alert) => ({ selection: { kind: "alert", id: alert.id }, expected: alert.cards })),
+      ]
+      for (const { selection, expected } of selections) {
+        const preset = reportLookupFilters(report, selection)
+        const params = new URLSearchParams()
+        setCardLookupParams(params, preset)
+        const restored = readCardLookupParams(params, report)
+        assert.deepEqual(restored, preset)
+        assert.equal(restored.start, report.end)
+        assert.equal(restored.end, report.end)
+        assert.equal(restored.estate, report.estate)
+        assert.equal(restored.park, report.park)
+        assert.deepEqual(lookupCards(restored).cards.map((card) => card.id), expected.map((card) => card.id))
+      }
+    }
+  }
+})
+
+test("opening balances and older snapshot links resolve to an explicit single-day period", () => {
+  const report = { ...defaults, start: "2026-09-01", end: "2026-09-20" }
+  for (const index of [0, 1]) {
+    const preset = reportLookupFilters(report, { kind: "metric", index })
+    assert.equal(lookupSnapshotDay(preset), "2026-09-01")
+    assert.equal(preset.start, "2026-09-01")
+    assert.equal(preset.end, "2026-09-01")
+    assert.equal(lookupDateError(preset), "")
+    const params = new URLSearchParams()
+    setCardLookupParams(params, preset)
+    assert.deepEqual(readCardLookupParams(params, report), preset)
+  }
+  for (const source of [report, defaults]) {
+    const day = source.start === "2026-09-01" ? source.start : "2026-09-30"
+    const legacy = new URLSearchParams({ lookupMode: "snapshot", lookupFrom: "report",
+      lookupStart: source.start, lookupEnd: day, lookupStatus: "Trong kho" })
+    const restored = readCardLookupParams(legacy, source)
+    assert.equal(restored.start, day)
+    assert.equal(restored.end, day)
+    assert.equal(lookupCards(restored).cards.length, metricCards(source, 0).count)
+    legacy.set("lookupSnapshotAt", "opening")
+    legacy.set("lookupEnd", source.end)
+    assert.deepEqual(readCardLookupParams(legacy, source), restored)
+  }
+  const oneDay = { ...defaultCardLookupFilters, mode: "snapshot", start: "2026-09-01", end: "2026-09-01" }
+  const params = new URLSearchParams({ lookupFrom: "report" })
+  setCardLookupParams(params, oneDay)
+  assert.deepEqual(readCardLookupParams(params, report), oneDay)
+})
+
+test("replacing URL lookup filters clears stale movement, category, alert and legacy selections", () => {
+  const params = new URLSearchParams({ metric: "3", circulation: "1", groupBy: "Loại thẻ", group: "VIP",
+    usage: "Khóa", alertGroup: "0", screen: "stock" })
+  const selected = reportLookupFilters(defaults, { kind: "alert", id: 0 })
+  setCardLookupParams(params, { ...selected, keyword: "A", group: "Cư dân" })
+  setCardLookupParams(params, defaultCardLookupFilters)
+  assert.equal(params.get("screen"), "stock")
+  assert.deepEqual(readCardLookupParams(params, defaults), defaultCardLookupFilters)
+  assert.deepEqual([...params.keys()], ["screen"])
+})
+
+test("snapshot periods validate both endpoints and ordering", () => {
+  const filters = reportLookupFilters(defaults, { kind: "metric", index: 0 })
+  assert.equal(lookupDateError({ ...filters, start: "2026-10-21", end: "2026-10-20" }), "Từ ngày phải trước hoặc bằng Đến ngày.")
+  assert.ok(lookupDateError({ ...filters, start: "" }))
+  assert.ok(lookupDateError({ ...filters, end: "" }))
+})
+
+test("movement lookup applies status, customer group and alert filters at the period end", () => {
+  const base = reportLookupFilters(defaults, { kind: "metric", index: 3 })
+  const unfiltered = lookupCards(base)
+  const endCards = snapshot(base.end)
+  const cases = [
+    { status: "Trong kho" }, { status: "Đang hoạt động" }, { status: "Lưu hành" },
+    { status: "Khóa" }, { status: "Hết hạn" }, { status: "Mất / hỏng" },
+    { group: "Cư dân" }, { group: "VIP và Vãng lai" },
+    { alert: "Sắp hết hạn" }, { alert: "Không khớp thông tin" }, { alert: "Cấp nhưng không sử dụng" },
+    { group: "Cư dân", status: "Đang sử dụng", alert: "Cấp nhưng không sử dụng" },
+  ]
+  for (const patch of cases) {
+    const filters = { ...base, ...patch }
+    const allowed = new Set(lookupCards({ ...filters, mode: "snapshot" }).cards.map((card) => card.id))
+    const expected = unfiltered.events.filter((event) => allowed.has(event.cardId))
+    const actual = lookupCards(filters)
+    assert.deepEqual(actual.events, expected)
+    assert.deepEqual(new Set(actual.cards.map((card) => card.id)), new Set(expected.map((event) => event.cardId)))
+    const params = new URLSearchParams()
+    setCardLookupParams(params, filters)
+    assert.deepEqual(readCardLookupParams(params, defaults), filters)
+  }
+  const returns = { ...base, movement: "return" }
+  const returnedThenIssued = lookupCards(returns).events.find((event) =>
+    endCards.find((card) => card.id === event.cardId)?.status === "Đang hoạt động")
+  assert.ok(returnedThenIssued)
+  assert.equal(returnedThenIssued.after.status, "Trong kho")
+  assert.ok(lookupCards({ ...returns, status: "Đang hoạt động" }).events.includes(returnedThenIssued))
+  assert.ok(!lookupCards({ ...returns, status: "Trong kho" }).events.includes(returnedThenIssued))
+})
+
+test("equal dates on today mean current state and the alert filter still applies", () => {
+  assert.equal(lookupDateError(defaultCardLookupFilters), "")
+  assert.equal(defaultCardLookupFilters.start, today)
+  assert.equal(defaultCardLookupFilters.end, today)
+  const cards = snapshot(defaults.end)
+  const filters = { ...defaultCardLookupFilters, alert: "Sắp hết hạn" }
+  assert.deepEqual(lookupCards(filters, undefined, cards).cards, cards.filter((card) => card.alerts.includes(0)))
+  assert.ok(lookupDateError({ ...filters, mode: "snapshot", start: defaults.start }))
 })
 test("parking rows and vehicle/type filters remain additive", () => {
   for (const estate of estates) {

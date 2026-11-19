@@ -64,8 +64,8 @@ export type CardLookupFilters = {
 export const defaultCardLookupFilters: CardLookupFilters = {
   mode: "current",
   keyword: "",
-  start: defaults.start,
-  end: defaults.end,
+  start: today,
+  end: today,
   estate: "",
   park: "",
   type: "",
@@ -386,9 +386,11 @@ export function reportLookupFilters(applied: Filters, selection: ReportLookupSel
   if (selection.kind === "metric") {
     const { index } = selection
     if (index >= 2 && index <= 5) return { ...filters, mode: "movement", movement: movementKinds[index - 2] }
-    return { ...filters, end: index < 2 ? openingSnapshotDay(filters.start) : filters.end,
+    const day = index < 2 ? openingSnapshotDay(applied.start) : applied.end
+    return { ...filters, start: day, end: day,
       status: index === 0 || index === 6 ? "Trong kho" : "Lưu hành" }
   }
+  filters.start = filters.end
   if (selection.kind === "alert") return { ...filters, alert: alertNames[selection.id] }
   if (selection.group) {
     if (selection.groupBy === "Loại thẻ") filters.type = selection.group
@@ -399,13 +401,13 @@ export function reportLookupFilters(applied: Filters, selection: ReportLookupSel
 }
 
 export function lookupDateError(filters: CardLookupFilters) {
-  if (filters.mode === "current") return ""
+  if (filters.mode === "current" && filters.start === today && filters.end === today) return ""
   const valid = (day: string) => /^\d{4}-\d{2}-\d{2}$/.test(day) &&
     Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day &&
     day >= "2026-09-01" && day <= maxDate
-  if (!valid(filters.end) || (filters.mode === "movement" && !valid(filters.start)))
+  if (!valid(filters.end) || !valid(filters.start))
     return `Chọn ngày từ 01/09/2026 đến ${date(maxDate)}.`
-  if (filters.mode === "movement" && filters.start > filters.end)
+  if (filters.start > filters.end)
     return "Từ ngày phải trước hoặc bằng Đến ngày."
   return ""
 }
@@ -414,7 +416,10 @@ const lookupFields = ["mode", "keyword", "start", "end", "estate", "park", "type
 const lookupParam = (field: typeof lookupFields[number]) => `lookup${field[0].toUpperCase()}${field.slice(1)}`
 
 export function setCardLookupParams(params: URLSearchParams, filters: CardLookupFilters) {
+  for (const field of ["metric", "circulation", "groupBy", "group", "usage", "alertGroup", "lookupSnapshotAt"])
+    params.delete(field)
   for (const field of lookupFields) {
+    params.delete(lookupParam(field))
     if (filters[field] && filters[field] !== defaultCardLookupFilters[field])
       params.set(lookupParam(field), filters[field])
   }
@@ -434,8 +439,8 @@ export function readCardLookupParams(params: URLSearchParams, reportFilters: Fil
   const filters: CardLookupFilters = {
     mode: mode === "snapshot" || mode === "movement" ? mode : "current",
     keyword: value("keyword").slice(0, 100),
-    start: value("start") || defaults.start,
-    end: value("end") || defaults.end,
+    start: mode === "snapshot" || mode === "movement" ? value("start") || defaults.start : today,
+    end: mode === "snapshot" || mode === "movement" ? value("end") || defaults.end : today,
     estate,
     park: option(parks, "park"),
     type: option(cardTypes, "type"),
@@ -445,7 +450,18 @@ export function readCardLookupParams(params: URLSearchParams, reportFilters: Fil
     alert: option(cardAlertIds.map((id) => alertNames[id]), "alert"),
     movement: option(movementKinds, "movement"),
   }
+  // Convert older opening-balance links to an explicit single-day period.
+  if (filters.mode === "snapshot") {
+    if (params.get("lookupSnapshotAt") === "opening")
+      filters.start = filters.end = openingSnapshotDay(filters.start)
+    else if (filters.end < filters.start && filters.end === openingSnapshotDay(filters.start))
+      filters.start = filters.end
+  }
   return lookupDateError(filters) ? { ...filters, start: defaults.start, end: defaults.end } : filters
+}
+
+export function lookupSnapshotDay(filters: CardLookupFilters) {
+  return filters.mode === "current" ? today : filters.end
 }
 
 export function matchesCardKeyword(card: Card, query: string) {
@@ -460,19 +476,8 @@ export function lookupCards(
   currentCards: Card[] = [],
 ): ReportLookupResult {
   const current = filters.mode === "current"
-  const asOf = current ? today : filters.end
+  const asOf = current ? today : lookupSnapshotDay(filters)
   const keyword = normalize(filters.keyword.trim())
-  if (filters.mode === "movement") {
-    const { cards, events } = movementsInScope(filters, filters.movement, thresholds)
-    const matches = cards.filter((card) => matchesCardKeyword(card, keyword))
-    const ids = new Set(matches.map((card) => card.id))
-    return {
-      asOf,
-      period: `Từ ${date(filters.start)} đến hết ${date(filters.end)}`,
-      cards: matches,
-      events: keyword ? events.filter((event) => ids.has(event.cardId)) : events,
-    }
-  }
   const { status, alert, group } = filters
   const alertId = cardAlertIds.find((id) => alertNames[id] === alert)
   const matchesStatus = (card: Card) => {
@@ -482,14 +487,26 @@ export function lookupCards(
       return isCirculating(card) && circulationStatus(card, asOf) === status
     return card.status === status
   }
+  const matchesCard = (card: Card) => matchesStatus(card) && matchesCardKeyword(card, keyword) &&
+    (!group || inCirculationGroup(card, "Nhóm khách hàng", group)) &&
+    (!alert || (alertId !== undefined && card.alerts.includes(alertId)))
+  if (filters.mode === "movement") {
+    const { cards, events } = movementsInScope(filters, filters.movement, thresholds)
+    const matches = cards.filter(matchesCard)
+    const ids = new Set(matches.map((card) => card.id))
+    return {
+      asOf,
+      period: `Từ ${date(filters.start)} đến hết ${date(filters.end)}`,
+      cards: matches,
+      events: events.filter((event) => ids.has(event.cardId)),
+    }
+  }
   return {
     asOf,
-    period: current ? "Hiện tại" : `Chốt hết ngày ${date(asOf)}`,
+    period: current ? "Hiện tại" : `Kỳ ${date(filters.start)} – ${date(filters.end)} · Trạng thái hết ngày ${date(asOf)}`,
     events: null,
     cards: (current ? currentCards : snapshot(asOf, thresholds)).filter((card) =>
-      inScope(card, filters) && matchesStatus(card) && matchesCardKeyword(card, keyword) &&
-      (!group || inCirculationGroup(card, "Nhóm khách hàng", group)) &&
-      (current || !alert || (alertId !== undefined && card.alerts.includes(alertId))),
+      inScope(card, filters) && matchesCard(card),
     ),
   }
 }

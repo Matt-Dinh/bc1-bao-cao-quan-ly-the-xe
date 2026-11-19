@@ -113,7 +113,7 @@ const cardColumnsKey = "vparking:card-lookup:columns"
 const basicCardColumns = ["id", "park", "type", "vehicle", "owner", "plate"]
 const cardEventColumns = {
   eventTime: "Thời điểm phát sinh",
-  movement: "Nghiệp vụ",
+  movement: "Loại biến động",
   before: "Trạng thái trước",
   after: "Trạng thái sau",
 }
@@ -809,18 +809,17 @@ export default function Operations({
   const lookupMode = lookupFilters?.mode ?? "current"
   const defaultLookupColumns = [
     ...basicCardColumns,
-    ...(lookupMode === "movement" ? Object.keys(cardEventColumns) : ["status"]),
-    ...(lookupMode === "snapshot" ? ["expiry", "alerts"] : []),
+    ...(lookupMode === "movement" ? [...Object.keys(cardEventColumns), "status"] : ["status"]),
+    ...(lookupMode !== "current" ? ["expiry", "alerts"] : []),
   ]
   const lookupColumnNames: Record<string, string> = {
     ...columnNames,
     park: "Kho bãi",
     plate: "Biển số",
     group: "Nhóm khách hàng",
-    status: lookupMode === "snapshot" ? "Trạng thái tại mốc chốt" : "Trạng thái",
+    status: lookupMode === "current" ? "Trạng thái" : "Trạng thái tại ngày đến",
     ...(lookupMode === "movement" ? cardEventColumns : {}),
   }
-  if (lookupMode === "movement") delete lookupColumnNames.status
   const selectedLookupColumns = (cardColumnPreferences[lookupMode] ?? defaultLookupColumns)
     .filter((key) => Object.prototype.hasOwnProperty.call(lookupColumnNames, key))
   if (!selectedLookupColumns.includes("id")) selectedLookupColumns.unshift("id")
@@ -1103,7 +1102,7 @@ export default function Operations({
                         "Biển số": c.plate,
                         ...(event ? {
                           "Thời điểm phát sinh": eventTime(event),
-                          "Nghiệp vụ": movementNames[event.kind],
+                          "Loại biến động": movementNames[event.kind],
                           "Trạng thái trước": event.before?.status || "—",
                           "Trạng thái sau": event.after.status,
                         } : { "Trạng thái": c.status }),

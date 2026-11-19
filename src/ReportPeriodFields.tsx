@@ -13,12 +13,14 @@ export default function ReportPeriodFields({
   period,
   min,
   max,
+  inputMax = max,
   error,
   onChange,
 }: {
   period: Period
   min?: string
   max: string
+  inputMax?: string
   error?: string
   onChange: (period: Period) => void
 }) {
@@ -35,10 +37,10 @@ export default function ReportPeriodFields({
         <Field label="Kỳ báo cáo" required error={error || undefined}>
           <div className="date-range">
             <CalendarDays size={15} />
-            <Input type="date" aria-label="Từ ngày" min={min} max={max} value={period.start}
+            <Input type="date" aria-label="Từ ngày" min={min} max={inputMax} value={period.start}
               onChange={(event) => onChange({ start: event.target.value, end: period.end })} />
             <span className="date-arrow"><ArrowRight size={14} /></span>
-            <Input type="date" aria-label="Đến ngày" min={min} max={max} value={period.end}
+            <Input type="date" aria-label="Đến ngày" min={min} max={inputMax} value={period.end}
               onChange={(event) => onChange({ start: period.start, end: event.target.value })} />
           </div>
         </Field>

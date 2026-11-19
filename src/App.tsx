@@ -101,6 +101,7 @@ import {
   defaultCardLookupFilters,
   inCirculationGroup,
   lossBreakdown,
+  lookupSnapshotDay,
   lookupCards,
   managementReport,
   readCardLookupParams,
@@ -231,8 +232,11 @@ function App() {
     Math.max(1, Number(new URLSearchParams(location.search).get("page")) || 1),
   )
   const [pageSize, setPageSize] = useState(20)
-  const [groupBy, setGroupBy] = useState<CirculationGrouping>("Loại thẻ")
-  const [split, setSplit] = useState(false)
+  const [groupBy, setGroupBy] = useState<CirculationGrouping>(() => {
+    const value = new URLSearchParams(location.search).get("reportGroupBy")
+    return value === "Loại phương tiện" || value === "Nhóm khách hàng" ? value : "Loại thẻ"
+  })
+  const [split, setSplit] = useState(() => new URLSearchParams(location.search).get("splitByEstate") === "1")
   const [lookupFilters, setLookupFilters] = useState(() =>
     operation === "lookup" ? readCardLookupParams(new URLSearchParams(location.search), initial.f) : null,
   )
@@ -309,6 +313,8 @@ function App() {
     if (operation) p.set("module", operation)
     for (const [key, value] of Object.entries(applied))
       if (value && value !== defaults[(key as keyof Filters)]) p.set(key, value)
+    if (groupBy !== "Loại thẻ") p.set("reportGroupBy", groupBy)
+    if (split) p.set("splitByEstate", "1")
     if (operation === "lookup" && lookupFilters) {
       setCardLookupParams(p, lookupFilters)
       if (lookupFromReport) p.set("lookupFrom", "report")
@@ -318,7 +324,7 @@ function App() {
     if (sortDesc || sortKey !== "id")
       p.set("sort", `${sortDesc ? "-" : ""}${sortKey}`)
     window.history.replaceState(null, "", `${window.location.pathname}?${p}`)
-  }, [screen, applied, query, page, sortKey, sortDesc, operation, parking, parkingParams, lookupFilters, lookupFromReport])
+  }, [screen, applied, query, page, sortKey, sortDesc, operation, parking, parkingParams, lookupFilters, lookupFromReport, groupBy, split])
   useEffect(() => {
     const changed = parkingDirty || (editing && JSON.stringify(edit) !== originalEdit)
     function leave(e: BeforeUnloadEvent) {
@@ -358,7 +364,7 @@ function App() {
   const warningCount = dashboard.warned
   const lookupResult = useMemo(
     () => operation === "lookup" && lookupFilters
-      ? lookupCards(lookupFilters, (estate) => currentThreshold(estate, lookupFilters.end), cardOperations.cards)
+      ? lookupCards(lookupFilters, (estate) => currentThreshold(estate, lookupSnapshotDay(lookupFilters)), cardOperations.cards)
       : null,
     [operation, lookupFilters, thresholds, cardOperations.cards],
   )
