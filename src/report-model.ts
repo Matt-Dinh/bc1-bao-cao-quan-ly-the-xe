@@ -115,7 +115,7 @@ const inLookupScope = (card: Card, f: CardLookupFilters, park = card.park) =>
 export function lookupSelectionError(f: CardLookupFilters) {
   if (!f.statuses.length) return "Chọn ít nhất một trạng thái."
   if (f.group.length && f.type.length && !f.type.includes("Thuê bao tháng"))
-    return "Nhóm khách hàng chỉ áp dụng cho thẻ Thuê bao tháng. Chọn loại thẻ này hoặc bỏ lọc nhóm khách hàng."
+    return "Nhóm thuê bao chỉ áp dụng cho thẻ Thuê bao tháng. Chọn loại thẻ này hoặc bỏ lọc nhóm thuê bao."
   if (f.park.length && f.estate.length && f.park.some((park) => !f.estate.some((estate) => park.startsWith(`${estate}::`))))
     return "Bãi xe đã chọn không thuộc khu đô thị đã chọn."
   return ""

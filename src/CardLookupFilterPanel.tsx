@@ -107,9 +107,9 @@ export default function CardLookupFilterPanel({
       </div>
       <div className="filter-grid lookup-filter-row">
         <CardLookupStatusFilter value={draft.statuses} onChange={(statuses) => update({ statuses })} />
-        <CardLookupMultiFilter label="Nhóm khách hàng" value={draft.group} onChange={(group) => update({ group })}
-          allLabel="Tất cả nhóm khách hàng" options={customerGroups.map((value) => ({ value, label: value }))}
-          note="Nhóm khách hàng áp dụng cho thẻ Thuê bao tháng. VIP và Vãng lai được chọn tại Loại thẻ." />
+        <CardLookupMultiFilter label="Nhóm thuê bao" value={draft.group} onChange={(group) => update({ group })}
+          allLabel="Tất cả nhóm thuê bao" options={customerGroups.map((value) => ({ value, label: value }))}
+          note="Nhóm thuê bao áp dụng cho thẻ Thuê bao tháng. VIP và Vãng lai được chọn tại Loại thẻ." />
         <CardLookupMultiFilter label="Cảnh báo" value={draft.alert} onChange={(alert) => update({ alert })}
           allLabel="Không giới hạn cảnh báo"
           options={lookupAlerts.map((label) => ({ value: label, label }))}
@@ -127,7 +127,7 @@ export default function CardLookupFilterPanel({
         <p className="lookup-time-hint" id="lookup-time-hint">
           <Info size={13} />
           <span>{movements
-            ? "Biến động tính trong kỳ; trạng thái, nhóm khách hàng và cảnh báo xét tại ngày Đến ngày. Một thẻ có thể phát sinh nhiều lần."
+            ? "Biến động tính trong kỳ; trạng thái, nhóm thuê bao và cảnh báo xét tại ngày Đến ngày. Một thẻ có thể phát sinh nhiều lần."
             : error ? "Chọn kỳ báo cáo hợp lệ để xem trạng thái thẻ."
             : draft.mode === "current"
               ? "Hai ngày cùng là hôm nay: xem trạng thái hiện tại. Chọn hai ngày trùng nhau để tra cứu một ngày khác."
