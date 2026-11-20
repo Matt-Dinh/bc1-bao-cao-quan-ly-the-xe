@@ -333,16 +333,6 @@ export function seedTrips(today = vnToday()): Trip[] {
         }
       }
     }
-    if (dayNumber % 7 === 1)
-      rows.push(
-        sampleTrip(
-          id++,
-          "C:2",
-          "Chưa xác định",
-          midnight + 550,
-          midnight + 810,
-        ),
-      )
   }
   rows.push({
     ...sampleTrip(
@@ -360,6 +350,10 @@ export function seedTrips(today = vnToday()): Trip[] {
     plate: "30F-456.78",
     group: "Vãng lai",
   })
+  for (const [index, [site, plate]] of [["A:0", "18E-112239"], ["B:2", "30A-123.45"], ["C:0", "30G-246.80"]].entries()) {
+    rows.push({ ...sampleTrip(9005 + index, site, "Ô tô", dayStart(shiftDay(today, -1)) + 9 * 60 + index * 30, null),
+      plate, group: "Vãng lai", due: null, paid: null, voucher: 0, issue: undefined, demoSupplement: true })
+  }
   rows.push(
     sampleTrip(
       9003,

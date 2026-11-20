@@ -85,6 +85,7 @@ import ReportDashboard from "./ReportDashboard"
 import ReportPeriodFields from "./ReportPeriodFields"
 import Parking from "./Parking"
 import useParking from "./useParking"
+import { useRevenueState } from "./useRevenueState"
 import {
   canOpen, dayAt, defaultParkingFilters, demoAccess, displayTime, isParkingScreen,
   overCapacityTripAlert, parkingMenus, parkingRoles, siteById, vnToday,
@@ -251,6 +252,7 @@ function App() {
   const [columnDraft, setColumnDraft] = useState(defaultColumns)
   const [toast, setToast] = useState("")
   const parkingModel = useParking(parkingAccess, setToast)
+  const revenueModel = useRevenueState(setToast)
   const [cardOperations, setCardOperations] = useState(seedOperations)
   const [notifications, setNotifications] = useState(false)
   const [help, setHelp] = useState(false)
@@ -2294,7 +2296,7 @@ function App() {
           />
           {parking && <Parking key={`${parkingAccess.role}/${parkingAccess.estate}`} screen={parking} params={parkingParams}
             access={parkingAccess} model={parkingModel} update={updateParking} navigate={chooseParking}
-            home={() => navigate("stock")} onDirty={setParkingDirty} notify={setToast} />}
+            home={() => navigate("stock")} onDirty={setParkingDirty} notify={setToast} revenue={revenueModel} />}
           <div hidden={!!operation || !!parking}>
             <div className="breadcrumbs">
               <span>{screen === "settings" ? "Cấu hình" : "Báo cáo"}</span>

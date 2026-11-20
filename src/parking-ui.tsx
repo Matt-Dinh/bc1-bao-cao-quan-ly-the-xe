@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react"
 import type { ReactNode } from "react"
-import { ChartNoAxesCombined, ChevronLeft, ChevronRight, Download, ListFilter, LoaderCircle, Search } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChartNoAxesCombined, ChevronLeft, ChevronRight, Download, ListFilter, LoaderCircle, Search } from "lucide-react"
 import { Button, Field, Form, Heading, Input, Select } from "./ui"
 import ReportPeriodFields from "./ReportPeriodFields"
 import { date, estates, fmt } from "./data"
-import { allowedSites, defaultParkingFilters, parkingVehicles, periodError, shiftDay } from "./parking-model"
+import { allowedSites, defaultParkingFilters, hasLookupHours, parkingVehicles, periodError, tripLookupMode } from "./parking-model"
 import type { ParkingAccess, ParkingFilters } from "./parking-model"
 
 export const numberText = (value: number | null | undefined, digits = 0) =>
@@ -31,10 +31,12 @@ export type UpdateParams = (patch: Record<string, string | null>) => void
 export type ExportCell = string | number | boolean | Date | null | undefined
 export type ExportRow = Record<string, ExportCell>
 export type Workbook = Record<string, ExportRow[]>
+export type ExportLimits = { rows: number; simultaneous: number; days: number }
 export type ExportParking = (
   name: string,
   make: () => Workbook,
   count?: number,
+  limits?: ExportLimits,
 ) => void
 export const excelDate = (minute: number | null) =>
   minute == null ? null : new Date(minute * 60000)
@@ -109,6 +111,8 @@ export function ParkingFiltersBar({
   const datesError = manual ? periodError(draft, cutoff) : error
   const lookupError = lookup && !datesError ? lookup.error(lookupDraft, draft) : ""
   const pending = manual && (parkingFilterKeys.some((key) => draft[key] !== filters[key]) || lookupDraft.toString() !== query)
+  const lookupMode = tripLookupMode(lookupDraft)
+  const supportsHours = !lookupMode || hasLookupHours(lookupMode)
   const update = (patch: Partial<ParkingFilters>) => {
     if (manual) setDraft((current) => ({ ...current, ...patch }))
     else change(patch)
@@ -143,6 +147,7 @@ export function ParkingFiltersBar({
           setLookupDraft(new URLSearchParams())
         }}>Xóa bộ lọc</Button>}
       </div>
+      <div className={lookup ? "parking-trip-fields" : undefined}>
       <div className="filter-grid">
         <Field label="Khu đô thị">
           <Select
@@ -169,23 +174,33 @@ export function ParkingFiltersBar({
             ]}
           />
         </Field>
-        {report ? (
-          <div className="field parking-vehicle-options" role="group" aria-label="Phương tiện">
-            <span className="field-label">Phương tiện</span>
-            <Segments options={[...parkingVehicles]} value={visible.vehicle}
-              change={(vehicle) => update({ vehicle: vehicle as ParkingFilters["vehicle"] })} />
-          </div>
-        ) : (
-          <Field label="Phương tiện">
-            <Select aria-label="Phương tiện" value={visible.vehicle} options={[...parkingVehicles]}
-              onChange={(e) => update({ vehicle: e.target.value as ParkingFilters["vehicle"] })} />
-          </Field>
-        )}
+        <Field label="Phương tiện">
+          <Select aria-label="Phương tiện" value={visible.vehicle} options={[...parkingVehicles]}
+            onChange={(e) => update({ vehicle: e.target.value as ParkingFilters["vehicle"] })} />
+        </Field>
       </div>
       {lookup?.fields(lookupDraft, updateLookup)}
+      </div>
       {manual ? (
-        <div className="filter-second-row">
-          <ReportPeriodFields period={draft} max={cutoff} error={datesError} onChange={update} />
+        <div className={`filter-second-row${lookup ? " parking-lookup-period" : ""}`}>
+          <ReportPeriodFields period={draft} max={cutoff} error={datesError} onChange={update}
+            label={lookup ? "Khoảng ngày tra cứu" : undefined}>
+            {lookup && <div className="parking-lookup-hours">
+              <Field label="Từ giờ" hint={supportsHours && lookupMode !== "closing" ? "Ngày đầu · trống: 00:00" : "Bỏ đối chiếu để chọn giờ."}>
+                <Input type="time" aria-label="Từ giờ" lang="vi-VN" step={60}
+                  disabled={!supportsHours || lookupMode === "closing"}
+                  value={lookupDraft.get("hourStart") ?? ""}
+                  onChange={(event) => updateLookup({ hourStart: event.target.value || null })} />
+              </Field>
+              <span className="parking-hour-arrow" aria-hidden="true">→</span>
+              <Field label="Đến giờ" hint={supportsHours && lookupMode !== "opening" ? "Ngày cuối · trống: 24:00" : "Bỏ đối chiếu để chọn giờ."}>
+                <Input type="time" aria-label="Đến giờ" lang="vi-VN" step={60}
+                  disabled={!supportsHours || lookupMode === "opening"}
+                  value={lookupDraft.get("hourEnd") ?? ""}
+                  onChange={(event) => updateLookup({ hourEnd: event.target.value || null })} />
+              </Field>
+            </div>}
+          </ReportPeriodFields>
           <div className="run-report">
             <Button type="submit" variant="primary" disabled={!!(datesError || lookupError) || loading}>
               {loading ? <LoaderCircle size={16} className="spin" /> : report ? <ChartNoAxesCombined size={16} /> : <Search size={16} />}
@@ -193,43 +208,9 @@ export function ParkingFiltersBar({
             </Button>
           </div>
         </div>
-      ) : <div className="filter-grid parking-lookup-grid">
-        <Field label="Từ ngày" required error={datesError || undefined}>
-          <Input
-            aria-label="Từ ngày"
-            type="date"
-            max={cutoff}
-            value={filters.start}
-            onChange={(e) => change({ start: e.target.value })}
-          />
-        </Field>
-        <Field label="Đến ngày" required>
-          <Input
-            aria-label="Đến ngày"
-            type="date"
-            max={cutoff}
-            value={filters.end}
-            onChange={(e) => change({ end: e.target.value })}
-          />
-        </Field>
-        <Field label="Chọn nhanh">
-          <Select
-            aria-label="Chọn nhanh"
-            value=""
-            onChange={(e) => {
-              if (e.target.value)
-                change({
-                  start: shiftDay(cutoff, 1 - Number(e.target.value)),
-                  end: cutoff,
-                })
-            }}
-            options={[
-              allOption("Chọn kỳ"),
-              { value: "7", label: "7 ngày trước" },
-              { value: "30", label: "30 ngày trước" },
-            ]}
-          />
-        </Field>
+      ) : <div className="filter-second-row">
+        <ReportPeriodFields period={filters} max={cutoff} error={datesError} label="Khoảng ngày tra cứu"
+          onChange={(period) => change(period)} />
       </div>}
       {lookupError && <p className="lookup-filter-error" role="alert">{lookupError}</p>}
     </Form>
@@ -333,6 +314,7 @@ export interface TableColumn<T> {
   label: string
   cell: (row: T) => ReactNode
   numeric?: boolean
+  sort?: { direction?: "ascending" | "descending"; change: () => void }
 }
 export function ParkingTable<T>({
   columns,
@@ -354,13 +336,19 @@ export function ParkingTable<T>({
       <table className="data-table parking-table">
         <thead>
           <tr>
-            {columns.map(({ label, numeric }) => (
+            {columns.map(({ label, numeric, sort }) => (
               <th
                 className={numeric ? "parking-number" : ""}
                 key={label}
                 scope="col"
+                aria-sort={sort ? sort.direction ?? "none" : undefined}
               >
-                {label}
+                {sort ? <Button variant="ghost" className="parking-column-sort"
+                  aria-label={`Sắp xếp theo ${label}: ${sort.direction === "ascending" ? "giảm dần" : "tăng dần"}`}
+                  onClick={sort.change}>
+                  {label}
+                  {sort.direction === "ascending" ? <ArrowUp size={13} /> : sort.direction === "descending" ? <ArrowDown size={13} /> : <ArrowUpDown size={13} />}
+                </Button> : label}
               </th>
             ))}
           </tr>

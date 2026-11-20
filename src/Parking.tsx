@@ -32,6 +32,7 @@ import type {
   ParkingAccess,
   ParkingFilters,
   ParkingScreen,
+  Trip,
   TripDrill,
 } from "./parking-model"
 import ParkingDashboard from "./ParkingDashboard"
@@ -55,6 +56,12 @@ import {
 import type { ExportParking, UpdateParams } from "./parking-ui"
 import { summaryWorkbook } from "./parking-export"
 import type useParking from "./useParking"
+import { RevenueTripEditor } from "./RevenueTripEditor"
+import type { RevenueTripActions } from "./RevenueTripEditor"
+import { orphanTransactions } from "./parking-supplement-data"
+import { tripRevenueAmounts } from "./revenue-model"
+import { getParkingFeeService } from "./parking-fees"
+import { createDemoParkingFeeService } from "./parking-fees-demo"
 
 type Navigate = (
   screen: ParkingScreen,
@@ -71,6 +78,7 @@ interface Props {
   home: () => void
   onDirty: (dirty: boolean) => void
   notify: (message: string) => void
+  revenue?: RevenueTripActions
 }
 export default function Parking({
   screen,
@@ -82,8 +90,33 @@ export default function Parking({
   home,
   onDirty,
   notify,
+  revenue,
 }: Props) {
-  const { trips, settings, cutoff, actor, save } = model
+  const { trips: baseTrips, settings, cutoff, actor, save } = model
+  const trips = useMemo(() => {
+    if (!baseTrips) return baseTrips
+    if (!revenue?.state.tripUpdates.length) return baseTrips.map(tripRevenueAmounts)
+    const byId = new Map(baseTrips.map((trip) => [trip.id, trip]))
+    for (const update of revenue.state.tripUpdates) byId.set(update.trip.id, update.trip)
+    return [...byId.values()].map(tripRevenueAmounts)
+  }, [baseTrips, revenue?.state.tripUpdates])
+  const pendingTrips: Trip[] = revenue && baseTrips ? orphanTransactions.filter((row) =>
+    (!access.estate || row.estate === access.estate) && !revenue.state.tripUpdates.some((update) => update.trip.id === row.trip))
+    .map((row) => ({
+      id: row.trip, site: `${row.estate}:0`, vehicle: "Ô tô", group: "Vãng lai",
+      plate: row.plate, ticket: `QR-${row.trip}`, owner: "", phone: "", entered: dayStart(row.day),
+      exited: dayStart(row.day) + Number(row.at.slice(-5, -3)) * 60 + Number(row.at.slice(-2)), laneIn: "", laneOut: "Làn ra 1",
+      sourceIn: "CSKH bổ sung", sourceOut: "Làn tự động", due: row.amount,
+      paid: row.status === "Thành công" ? row.amount : 0, voucher: 0,
+    })) : []
+  const demoFeeSource = useRef({ baseTrips, pendingTrips, updates: revenue?.state.tripUpdates })
+  demoFeeSource.current = { baseTrips, pendingTrips, updates: revenue?.state.tripUpdates }
+  const demoFeeService = useMemo(() => createDemoParkingFeeService((id) => {
+    const current = demoFeeSource.current
+    return current.updates?.find((row) => row.trip.id === id)?.trip ??
+      current.baseTrips?.find((row) => row.id === id) ?? current.pendingTrips.find((row) => row.id === id)
+  }), [])
+  const parkingFeeService = revenue?.feeService ?? getParkingFeeService() ?? demoFeeService
   const defaults = defaultParkingFilters(cutoff)
   const filters = useMemo<ParkingFilters>(
     () => ({
@@ -323,6 +356,9 @@ export default function Parking({
         back={backTrip}
         exportFile={exportFile}
         access={access}
+        revenueActions={revenue && <RevenueTripEditor existing={revenue.state.tripUpdates.find((update) => update.trip.id === trip.id)?.trip ??
+          baseTrips?.find((original) => original.id === trip.id) ?? trip} {...revenue} feeService={parkingFeeService}
+          trips={baseTrips ?? []} settings={settings} actor={actor} access={access} notify={notify} />}
       />
     )
   const exportReport = () => {
@@ -515,6 +551,8 @@ export default function Parking({
               changes={changes}
               openTrip={openTrip}
               headingActions={tripHeadingActions}
+              revenueActions={revenue && <RevenueTripEditor pendingTrips={pendingTrips} {...revenue} feeService={parkingFeeService}
+                trips={baseTrips ?? []} settings={settings} actor={actor} access={access} notify={notify} />}
             />
           )}
         </>

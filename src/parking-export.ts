@@ -35,9 +35,10 @@ export function tripExport(
   days: string[],
   night?: string,
   end = dayStart(filters.end) + dayMinutes,
+  actualEvents = false,
 ) {
   const site = siteById(trip.site)
-  const closed = statusAt(trip, end) === "Đã ra"
+  const closed = actualEvents ? trip.exited != null : statusAt(trip, end) === "Đã ra"
   return {
     "Mã lượt": trip.id,
     "Biển số": trip.plate,
@@ -49,7 +50,11 @@ export function tripExport(
     "Giờ vào": excelDate(trip.entered),
     "Giờ ra": excelDate(closed ? trip.exited : null),
     "Thời gian đỗ (giờ)": durationHours(trip, end),
-    "Trạng thái": statusAt(trip, end),
+    ...(actualEvents ? {
+      "Trạng thái tại mốc tra cứu": statusAt(trip, end),
+      "Mốc tra cứu (không gồm thời điểm này)": excelDate(end),
+      "Ghi chú giờ ra": trip.exited != null && trip.exited >= end ? "Ra sau mốc tra cứu" : "",
+    } : { "Trạng thái": statusAt(trip, end) }),
     "Cảnh báo": tripAlerts(trip, filters, settings).join(", "),
     "Làn vào": trip.laneIn,
     "Làn ra": closed ? trip.laneOut : "",
@@ -62,6 +67,10 @@ export function tripExport(
     "Loại phí": closed ? "" : "Tạm tính",
     Voucher: trip.voucher,
     "Thực thu": closed ? trip.paid : null,
+    ...(closed && trip.supplementalExit ? {
+      "Số biên bản": trip.supplementalExit.reference,
+      "Phương thức thanh toán": trip.supplementalExit.method,
+    } : {}),
     "Chủ xe": trip.owner,
     "Số điện thoại": trip.phone,
   }

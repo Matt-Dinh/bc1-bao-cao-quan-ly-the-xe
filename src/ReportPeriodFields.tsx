@@ -1,4 +1,5 @@
 import { ArrowRight, CalendarDays } from "lucide-react"
+import type { ReactNode } from "react"
 import { Button, Field, Input } from "./ui"
 
 type Period = { start: string; end: string }
@@ -15,14 +16,18 @@ export default function ReportPeriodFields({
   max,
   inputMax = max,
   error,
+  label = "Kỳ báo cáo",
   onChange,
+  children,
 }: {
   period: Period
   min?: string
   max: string
   inputMax?: string
   error?: string
+  label?: string
   onChange: (period: Period) => void
+  children?: ReactNode
 }) {
   const monthStart = `${max.slice(0, 7)}-01`
   const lastMonthEnd = daysBefore(monthStart, 1)
@@ -34,7 +39,7 @@ export default function ReportPeriodFields({
   return (
     <>
       <div className="date-field">
-        <Field label="Kỳ báo cáo" required error={error || undefined}>
+        <Field label={label} required error={error || undefined}>
           <div className="date-range">
             <CalendarDays size={15} />
             <Input type="date" aria-label="Từ ngày" min={min} max={inputMax} value={period.start}
@@ -45,6 +50,7 @@ export default function ReportPeriodFields({
           </div>
         </Field>
       </div>
+      {children}
       <div className="quick-dates">
         {presets.map(({ label, start, end }) => {
           const selected = period.start === start && period.end === end

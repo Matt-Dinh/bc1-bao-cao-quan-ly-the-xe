@@ -4,7 +4,6 @@ export const parkingVehicles = [
   "Ô tô",
   "Xe máy",
   "Xe đạp",
-  "Chưa xác định",
 ] as const
 export const parkingGroups = ["Vãng lai", "Thuê bao", "VIP"] as const
 export const durationGroups = [
@@ -25,6 +24,14 @@ export const overCapacityTripAlert = {
   value: "exceeded",
   label: "Xe có mặt khi bãi vượt sức chứa",
 }
+export const tripAlertOptions = [
+  { value: alertTabs[1], label: "Xe vãng lai đỗ lâu", hint: "Vượt ngưỡng thời gian cảnh báo được cấu hình cho khu đô thị." },
+  { value: alertTabs[2], label: "Xe ra chưa thu đủ phí", hint: "Đã ra nhưng số tiền đã thu còn thiếu sau khi tính miễn, giảm." },
+  { value: alertTabs[3], label: "Cần kiểm tra tại làn", hint: "Có ghi nhận cần rà soát, như thiếu lượt vào hoặc không đọc được biển số." },
+] as const
+export const tripAlertLabel = (value: string) =>
+  tripAlertOptions.find((option) => option.value === value)?.label ??
+  (value === overCapacityTripAlert.value || value === overCapacityTripAlert.label ? "Liên quan đến bãi vượt sức chứa" : value)
 export const laneIssues = [
   "Vào lại khi lượt trước chưa ra",
   "Ra không có lượt vào",
@@ -60,7 +67,7 @@ export const isParkingScreen = (value: string | null): value is ParkingScreen =>
   parkingMenus.some((menu) => menu.id === value)
 export type Vehicle = typeof parkingVehicles[number]
 export type Guest = typeof parkingGroups[number]
-export type Role = "admin" | "manager" | "operations" | "finance" | "reviewer" | "it" | "security"
+export type Role = "admin" | "manager" | "operations" | "finance" | "reviewer" | "it" | "security" | "customer"
 export const parkingRoles: Record<Role, string> = {
   admin: "Admin Local",
   manager: "Ban quản lý",
@@ -69,6 +76,7 @@ export const parkingRoles: Record<Role, string> = {
   reviewer: "TT / CBLĐ (hậu kiểm)",
   it: "IT VCR",
   security: "Nhân viên an ninh",
+  customer: "Chăm sóc khách hàng",
 }
 export type ParkingAccess = { role: Role; estate: string }
 export const demoAccess: ParkingAccess = { role: "admin", estate: "" }
@@ -81,6 +89,8 @@ export function allowedSites(access: ParkingAccess) {
 }
 export function canOpen(access: ParkingAccess, screen: ParkingScreen) {
   switch (access.role) {
+    case "customer":
+      return screen === "parking-trips"
     case "reviewer":
       return screen === "parking-alerts" || screen === "parking-trips"
     case "security":
@@ -173,7 +183,7 @@ export function periodError(filters: ParkingFilters, cutoff: string) {
     return "Khoảng thời gian không được vượt quá 31 ngày."
   return ""
 }
-export type Source = "Làn tự động" | "ANBV bổ sung" | "App khi mất điện"
+export type Source = "Làn tự động" | "ANBV bổ sung" | "CSKH bổ sung" | "App khi mất điện"
 export interface Trip {
   id: string
   site: string
@@ -193,9 +203,12 @@ export interface Trip {
   cameraOut?: string
   photoIn?: string
   photoOut?: string
+  demoSupplement?: boolean
   due: number | null
   paid: number | null
   voucher: number
+  supplementalExit?: { reference: string; method: import("./revenue-model").Method }
+  supplementalBilling?: import("./parking-fees").ParkingFeeQuote
   policy?: string
   issue?: {
     kind: typeof laneIssues[number]
@@ -360,14 +373,27 @@ export const deficit = (trip: Trip) =>
   trip.due === null || trip.paid === null
     ? 0
     : Math.max(0, trip.due - trip.voucher - trip.paid)
+export const normalizeTripSearch = (text: string) => normalize(text.replace(/[\u2010-\u2015\u2212]/g, ""))
 export const searchTrips = (trip: Trip, text: string) => {
-  const query = normalize(text)
+  const query = normalizeTripSearch(text)
   return (
     query.length < 3 ||
     [trip.id, trip.plate, trip.ticket].some((value) =>
-      normalize(value).includes(query),
+      normalizeTripSearch(value).includes(query),
     )
   )
+}
+export function supplementTripCandidates(trips: Trip[], updates: Trip[], access: ParkingAccess, text: string, now = vnNow()) {
+  const query = normalizeTripSearch(text)
+  const tooShort = !!text.trim() && query.length < 3
+  const permitted = new Set(allowedSites(access).map((site) => site.id))
+  const latest = new Map(trips.map((trip) => [trip.id, trip]))
+  for (const trip of [...updates].reverse()) latest.set(trip.id, trip)
+  const matches = [...latest.values()].filter((trip) => permitted.has(trip.site) &&
+    !tooShort && (!query || searchTrips(trip, text)))
+  const available = matches.filter((trip) => trip.exited == null && trip.entered <= now).sort((a, b) => b.entered - a.entered)
+  const recorded = query ? matches.filter((trip) => trip.exited != null || trip.entered > now).sort((a, b) => b.entered - a.entered) : []
+  return { available, recorded, tooShort }
 }
 export const parkedAt = (trip: Trip, minute: number) =>
   trip.entered < minute && (trip.exited === null || trip.exited >= minute)
@@ -906,8 +932,8 @@ export function drillTrips(
   })
 }
 
-export const tripLookupKeys = ["tripMode", "hourStart", "hourEnd", "dayKind", "durationGroup"] as const
-export const clearTripLookup = { tripMode: null, hourStart: null, hourEnd: null, dayKind: null, durationGroup: null }
+export const tripLookupKeys = ["tripMode", "reportMetric", "hourStart", "hourEnd", "dayKind", "durationGroup"] as const
+export const clearTripLookup = { tripMode: null, reportMetric: null, hourStart: null, hourEnd: null, dayKind: null, durationGroup: null }
 export const tripLookupMode = (params: URLSearchParams): DrillMetric | null => {
   const mode = params.get("tripMode")
   return mode && Object.prototype.hasOwnProperty.call(tripLookupModes, mode) ? mode as DrillMetric : null
@@ -919,7 +945,6 @@ const lookupAlerts: Partial<Record<DrillMetric, string>> = {
   unusual: alertTabs[1],
   deficit: alertTabs[2],
   issue: alertTabs[3],
-  exceeded: overCapacityTripAlert.value,
 }
 
 export function tripLookupPatch(value: TripDrill, filters: ParkingFilters, settings: ParkingSettings) {
@@ -942,7 +967,7 @@ export function tripLookupPatch(value: TripDrill, filters: ParkingFilters, setti
   const tripMode = alert || state ? null : value.metric === "duration" ? "outgoing" : value.metric
   return {
     estate, site, vehicle: filters.vehicle, start, end,
-    tripMode, alert, state,
+    tripMode, reportMetric: value.metric, alert, state,
     hourStart: hasLookupHours(tripMode) && tripMode !== "closing" && value.start % dayMinutes
       ? clockTime(value.start) : null,
     hourEnd: hasLookupHours(tripMode) && tripMode !== "opening" && value.end % dayMinutes
@@ -959,11 +984,23 @@ const lookupHour = (value: string | null) => value && /^([01]\d|2[0-3]):[0-5]\d$
 export function tripLookupWindow(params: URLSearchParams, filters: ParkingFilters) {
   const mode = tripLookupMode(params)
   const startDay = filters.start < goLive ? goLive : filters.start
-  const from = hasLookupHours(mode) && mode !== "closing" ? lookupHour(params.get("hourStart")) : null
-  const to = hasLookupHours(mode) && mode !== "opening" ? lookupHour(params.get("hourEnd")) : null
+  const supportsHours = !mode || hasLookupHours(mode)
+  const from = supportsHours && mode !== "closing" ? lookupHour(params.get("hourStart")) : null
+  const to = supportsHours && mode !== "opening" ? lookupHour(params.get("hourEnd")) : null
   const start = dayStart(startDay) + (from ?? 0)
   const end = dayStart(filters.end) + (to ?? dayMinutes)
   return { start, end }
+}
+
+export function tripLookupTimeError(params: URLSearchParams, filters: ParkingFilters) {
+  for (const key of ["hourStart", "hourEnd"]) {
+    if (params.get(key) && lookupHour(params.get(key)) === null)
+      return "Vui lòng nhập giờ hợp lệ theo định dạng HH:mm."
+  }
+  const { start, end } = tripLookupWindow(params, filters)
+  return filters.end >= goLive && start >= end
+    ? "Thời điểm kết thúc phải sau thời điểm bắt đầu. Nếu tra cứu qua đêm, chọn ngày kết thúc là ngày hôm sau."
+    : ""
 }
 
 export function tripLookupDrill(params: URLSearchParams, filters: ParkingFilters, data: ParkingReportData): TripDrill | null {
