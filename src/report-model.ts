@@ -2,6 +2,7 @@ import {
   alertNames,
   cardAlertIds,
   cards,
+  cardStatuses,
   cardTypes,
   customerGroups,
   date,
@@ -38,42 +39,86 @@ export const stockMetricLabels = [
   "Mất / hỏng", "Tồn kho cuối kỳ", "Thẻ lưu hành cuối kỳ",
 ]
 export const movementKinds = ["import", "issue", "return", "loss"] as const
-export const lookupStatuses = ["Trong kho", "Đang hoạt động", "Lưu hành", "Đang sử dụng", "Khóa", "Hết hạn", "Mất / hỏng"] as const
+export const lookupAlerts = cardAlertIds.map((id) => alertNames[id])
+function normalizeLookupAlerts(values: readonly string[]) {
+  // Older links represented the union of warnings with a single sentinel.
+  return values.includes("any") ? [...lookupAlerts] : lookupAlerts.filter((label) => values.includes(label))
+}
+export const lookupStatuses = [...cardStatuses, "Hết hạn"] as const
+export type LookupStatus = typeof lookupStatuses[number]
+export const circulatingLookupStatuses: LookupStatus[] = ["Đang hoạt động", "Khóa", "Hết hạn"]
+export const normalizeLookupStatuses = (values: readonly string[]): LookupStatus[] =>
+  lookupStatuses.filter((status) => values.includes(status))
+export function lookupCardStatus(card: Card, day: string): LookupStatus {
+  return card.status === "Đang hoạt động" && card.expiry && card.expiry < day
+    ? "Hết hạn" : card.status as LookupStatus
+}
+export function lookupStatusesForLifecycle(status: string): LookupStatus[] {
+  if (status === "Đang hoạt động") return ["Đang hoạt động", "Hết hạn"]
+  return lookupStatuses.includes(status as LookupStatus) ? [status as LookupStatus] : [...lookupStatuses]
+}
+function legacyLookupStatuses(status: string, usage: string): LookupStatus[] {
+  const usageStatuses = (value: string): LookupStatus[] => value === "Lưu hành" ? [...circulatingLookupStatuses]
+    : value === "Đang sử dụng" || value === "Đang hoạt động" ? ["Đang hoạt động"]
+    : value === "Hết hạn" ? ["Hết hạn"] : value === "Khóa" ? ["Khóa"] : [...lookupStatuses]
+  const byStatus = status === "Lưu hành" || status === "Đang sử dụng"
+    ? usageStatuses(status) : lookupStatusesForLifecycle(status)
+  const byUsage = usageStatuses(usage)
+  return normalizeLookupStatuses(byStatus.filter((value) => byUsage.includes(value)))
+}
 export const circulationGroupings = ["Loại thẻ", "Loại phương tiện", "Nhóm khách hàng"] as const
-export const circulationStatuses = ["Đang sử dụng", "Khóa", "Hết hạn"] as const
+export const circulationStatuses = ["Đang hoạt động", "Khóa", "Hết hạn"] as const
 export type CirculationGrouping = typeof circulationGroupings[number]
 export type CirculationStatus = typeof circulationStatuses[number]
 export type ReportLookupSelection =
   | { kind: "metric"; index: number; estate?: string; park?: string }
   | { kind: "circulation"; groupBy?: CirculationGrouping; group?: string; status?: CirculationStatus; estate?: string }
-  | { kind: "alert"; id: number }
+  | { kind: "alert"; id: number | "all" }
 export type CardLookupFilters = {
   mode: "current" | "snapshot" | "movement"
   keyword: string
   start: string
   end: string
-  estate: string
-  park: string
-  type: string
-  vehicle: string
-  status: typeof lookupStatuses[number] | ""
-  group: string
-  alert: string
-  movement: typeof movementKinds[number] | ""
+  estate: string[]
+  park: string[]
+  type: string[]
+  vehicle: string[]
+  statuses: LookupStatus[]
+  group: string[]
+  alert: string[]
+  movement: (typeof movementKinds[number])[]
 }
 export const defaultCardLookupFilters: CardLookupFilters = {
   mode: "current",
   keyword: "",
   start: today,
   end: today,
-  estate: "",
-  park: "",
-  type: "",
-  vehicle: "",
-  status: "",
-  group: "",
-  alert: "",
-  movement: "",
+  estate: [],
+  park: [],
+  type: [],
+  vehicle: [],
+  statuses: [...lookupStatuses],
+  group: [],
+  alert: [],
+  movement: [],
+}
+// Empty optional selections mean no restriction. Statuses are an explicit partition.
+export const lookupSelection = (value: string) => value ? [value] : []
+export const lookupParkKey = (estate: string, park: string) => `${estate}::${park}`
+export const lookupParkOptions = estates.flatMap((estate) => estate.parks.map((park) => ({
+  value: lookupParkKey(estate.id, park), label: `${park} · ${estate.name}`, estate: estate.id,
+})))
+const selected = (values: readonly string[], value: string) => !values.length || values.includes(value)
+const inLookupScope = (card: Card, f: CardLookupFilters, park = card.park) =>
+  selected(f.estate, card.estate) && selected(f.park, lookupParkKey(card.estate, park)) &&
+  selected(f.type, card.type) && selected(f.vehicle, card.vehicle)
+export function lookupSelectionError(f: CardLookupFilters) {
+  if (!f.statuses.length) return "Chọn ít nhất một trạng thái."
+  if (f.group.length && f.type.length && !f.type.includes("Thuê bao tháng"))
+    return "Nhóm khách hàng chỉ áp dụng cho thẻ Thuê bao tháng. Chọn loại thẻ này hoặc bỏ lọc nhóm khách hàng."
+  if (f.park.length && f.estate.length && f.park.some((park) => !f.estate.some((estate) => park.startsWith(`${estate}::`))))
+    return "Bãi xe đã chọn không thuộc khu đô thị đã chọn."
+  return ""
 }
 export type ReportLookupResult = {
   period: string
@@ -269,7 +314,8 @@ const inScope = (card: Card, f: CardScope, park = card.park) =>
   (!f.type || card.type === f.type) &&
   (!f.vehicle || card.vehicle === f.vehicle)
 
-function movementsInScope(f: CardPeriod, kind: CardLookupFilters["movement"], thresholds?: (estate: string) => Threshold) {
+function movementsInScope(f: Pick<CardPeriod, "start" | "end">, kinds: readonly string[], thresholds: ((estate: string) => Threshold) | undefined,
+  matchesScope: (card: Card, park: string) => boolean) {
   const latest = new Map(snapshot(f.end, thresholds).map((card) => [card.id, card]))
   const selected = new Map<string, Card>()
   const occurrences: Record<string, number> = {}
@@ -277,8 +323,8 @@ function movementsInScope(f: CardPeriod, kind: CardLookupFilters["movement"], th
   for (const entry of cardEvents) {
     const card = latest.get(entry.cardId)
     const day = entry.at.slice(0, 10)
-    if (!card || entry.kind === "lock" || (kind && entry.kind !== kind) ||
-        day < f.start || day > f.end || !inScope(card, f, entry.park)) continue
+    if (!card || entry.kind === "lock" || (kinds.length && !kinds.includes(entry.kind)) ||
+        day < f.start || day > f.end || !matchesScope(card, entry.park)) continue
     selected.set(card.id, card)
     events.push(entry)
     occurrences[card.id] = (occurrences[card.id] || 0) + 1
@@ -287,7 +333,7 @@ function movementsInScope(f: CardPeriod, kind: CardLookupFilters["movement"], th
 }
 
 export function metricCards(f: Filters, metric: number, thresholds?: (estate: string) => Threshold): MetricResult {
-  if (metric >= 2 && metric <= 5) return movementsInScope(f, movementKinds[metric - 2], thresholds)
+  if (metric >= 2 && metric <= 5) return movementsInScope(f, [movementKinds[metric - 2]], thresholds, (card, park) => inScope(card, f, park))
   const occurrences: Record<string, number> = {}
   const rows = snapshot(metric < 2 ? openingSnapshotDay(f.start) : f.end, thresholds).filter(
     (card) => inScope(card, f) && (metric === 0 || metric === 6
@@ -324,7 +370,7 @@ export function inCirculationGroup(card: Card, groupBy: CirculationGrouping, lab
 }
 export function circulationStatus(card: Card, day: string): CirculationStatus {
   if (card.status === "Khóa") return "Khóa"
-  return card.expiry && card.expiry < day ? "Hết hạn" : "Đang sử dụng"
+  return card.expiry && card.expiry < day ? "Hết hạn" : "Đang hoạt động"
 }
 const isCirculating = (card: Card) => card.status === "Đang hoạt động" || card.status === "Khóa"
 
@@ -365,11 +411,18 @@ function readReportLookupParams(params: URLSearchParams): ReportLookupSelection 
   if (params.get("circulation") === "1") {
     const groupBy = circulationGroupings.find((item) => item === params.get("groupBy"))
     const group = groupBy ? circulationGroups(groupBy).find((item) => item === params.get("group")) : undefined
-    const status = circulationStatuses.find((item) => item === params.get("usage"))
+    const usage = params.get("usage") === "Đang sử dụng" ? "Đang hoạt động" : params.get("usage")
+    const status = circulationStatuses.find((item) => item === usage)
     return { kind: "circulation", estate: estate?.id, groupBy, group, status }
   }
+  if (params.get("alertGroup") === "all") return { kind: "alert", id: "all" }
   const alert = cardAlertIds.find((id) => String(id) === params.get("alertGroup"))
   return alert !== undefined ? { kind: "alert", id: alert } : null
+}
+
+export function isReportCardLookup(params: URLSearchParams) {
+  return params.get("lookupFrom") === "report" ||
+    (!params.has("lookupMode") && readReportLookupParams(params) !== null)
 }
 
 export function reportLookupFilters(applied: Filters, selection: ReportLookupSelection): CardLookupFilters {
@@ -378,26 +431,34 @@ export function reportLookupFilters(applied: Filters, selection: ReportLookupSel
     mode: "snapshot",
     start: applied.start,
     end: applied.end,
-    estate: selection.kind !== "alert" ? selection.estate || applied.estate : applied.estate,
-    park: selection.kind === "metric" ? selection.park || applied.park : applied.park,
-    type: applied.type,
-    vehicle: applied.vehicle,
+    estate: lookupSelection(selection.kind !== "alert" ? selection.estate || applied.estate : applied.estate),
+    park: [],
+    type: lookupSelection(applied.type),
+    vehicle: lookupSelection(applied.vehicle),
   }
+  const park = selection.kind === "metric" ? selection.park || applied.park : applied.park
+  filters.park = park ? lookupParkOptions.filter((option) => selected(filters.estate, option.estate) &&
+    option.value === lookupParkKey(option.estate, park)).map((option) => option.value) : []
   if (selection.kind === "metric") {
     const { index } = selection
-    if (index >= 2 && index <= 5) return { ...filters, mode: "movement", movement: movementKinds[index - 2] }
+    if (index >= 2 && index <= 5) return { ...filters, mode: "movement", movement: [movementKinds[index - 2]] }
     const day = index < 2 ? openingSnapshotDay(applied.start) : applied.end
     return { ...filters, start: day, end: day,
-      status: index === 0 || index === 6 ? "Trong kho" : "Lưu hành" }
+      statuses: index === 0 || index === 6 ? ["Trong kho"] : [...circulatingLookupStatuses] }
   }
   filters.start = filters.end
-  if (selection.kind === "alert") return { ...filters, alert: alertNames[selection.id] }
+  if (selection.kind === "alert") return { ...filters, alert: selection.id === "all" ? [...lookupAlerts] : [alertNames[selection.id]] }
   if (selection.group) {
-    if (selection.groupBy === "Loại thẻ") filters.type = selection.group
-    if (selection.groupBy === "Loại phương tiện") filters.vehicle = selection.group
-    if (selection.groupBy === "Nhóm khách hàng") filters.group = selection.group
+    if (selection.groupBy === "Loại thẻ") filters.type = [selection.group]
+    if (selection.groupBy === "Loại phương tiện") filters.vehicle = [selection.group]
+    if (selection.groupBy === "Nhóm khách hàng") {
+      if (selection.group === "VIP và Vãng lai") {
+        filters.type = cardTypes.filter((type) => type !== "Thuê bao tháng" && selected(filters.type, type))
+        if (!filters.type.length) return { ...filters, statuses: [] }
+      } else filters.group = [selection.group]
+    }
   }
-  return { ...filters, status: selection.status || "Lưu hành" }
+  return { ...filters, statuses: selection.status ? [selection.status] : [...circulatingLookupStatuses] }
 }
 
 export function lookupDateError(filters: CardLookupFilters) {
@@ -412,17 +473,24 @@ export function lookupDateError(filters: CardLookupFilters) {
   return ""
 }
 
-const lookupFields = ["mode", "keyword", "start", "end", "estate", "park", "type", "vehicle", "status", "group", "alert", "movement"] as const
-const lookupParam = (field: typeof lookupFields[number]) => `lookup${field[0].toUpperCase()}${field.slice(1)}`
+const lookupFields = ["mode", "keyword", "start", "end"] as const
+const lookupMultiFields = ["estate", "park", "type", "vehicle", "group", "alert", "movement"] as const
+const lookupParam = (field: string) => `lookup${field[0].toUpperCase()}${field.slice(1)}`
 
 export function setCardLookupParams(params: URLSearchParams, filters: CardLookupFilters) {
-  for (const field of ["metric", "circulation", "groupBy", "group", "usage", "alertGroup", "lookupSnapshotAt"])
+  for (const field of ["metric", "circulation", "groupBy", "group", "usage", "alertGroup", "lookupSnapshotAt", "lookupStatus", "lookupUsage", "lookupStatuses"])
     params.delete(field)
   for (const field of lookupFields) {
     params.delete(lookupParam(field))
     if (filters[field] && filters[field] !== defaultCardLookupFilters[field])
       params.set(lookupParam(field), filters[field])
   }
+  for (const field of lookupMultiFields) {
+    params.delete(lookupParam(field))
+    for (const value of field === "alert" ? normalizeLookupAlerts(filters.alert) : filters[field]) params.append(lookupParam(field), value)
+  }
+  const statuses = normalizeLookupStatuses(filters.statuses)
+  if (statuses.length !== lookupStatuses.length) params.set("lookupStatuses", statuses.join(","))
 }
 
 export function readCardLookupParams(params: URLSearchParams, reportFilters: Filters): CardLookupFilters {
@@ -431,24 +499,37 @@ export function readCardLookupParams(params: URLSearchParams, reportFilters: Fil
     const selection = readReportLookupParams(params)
     if (selection) return reportLookupFilters(reportFilters, selection)
   }
-  const value = (field: typeof lookupFields[number]) => params.get(lookupParam(field)) || ""
-  const option = <T extends string>(choices: readonly T[], field: typeof lookupFields[number]) =>
-    choices.find((item) => item === value(field)) || ""
-  const estate = option(estates.map((item) => item.id), "estate")
-  const parks = estates.filter((item) => !estate || item.id === estate).flatMap((item) => item.parks)
+  const value = (field: string) => params.get(lookupParam(field)) || ""
+  const options = <T extends string>(choices: readonly T[], field: string) => {
+    const values = params.getAll(lookupParam(field))
+    return choices.filter((choice) => values.includes(choice))
+  }
+  const estate = options(estates.map((item) => item.id), "estate")
+  // A parking selection identifies its estate too: repeated names must not widen scope.
+  const rawParks = params.getAll("lookupPark")
+  const park = lookupParkOptions.filter((option) => rawParks.includes(option.value) ||
+    (selected(estate, option.estate) && rawParks.includes(option.value.split("::")[1]))).map((option) => option.value)
   const filters: CardLookupFilters = {
     mode: mode === "snapshot" || mode === "movement" ? mode : "current",
     keyword: value("keyword").slice(0, 100),
     start: mode === "snapshot" || mode === "movement" ? value("start") || defaults.start : today,
     end: mode === "snapshot" || mode === "movement" ? value("end") || defaults.end : today,
     estate,
-    park: option(parks, "park"),
-    type: option(cardTypes, "type"),
-    vehicle: option(vehicles, "vehicle"),
-    status: option(lookupStatuses, "status"),
-    group: option(circulationGroups("Nhóm khách hàng"), "group"),
-    alert: option(cardAlertIds.map((id) => alertNames[id]), "alert"),
-    movement: option(movementKinds, "movement"),
+    park,
+    type: options(cardTypes, "type"),
+    vehicle: options(vehicles, "vehicle"),
+    statuses: params.has("lookupStatuses") ? normalizeLookupStatuses((params.get("lookupStatuses") || "").split(","))
+      : legacyLookupStatuses(params.get("lookupStatus") || "", params.get("lookupUsage") || ""),
+    group: options(customerGroups, "group"),
+    alert: normalizeLookupAlerts(params.getAll("lookupAlert")),
+    movement: options(movementKinds, "movement"),
+  }
+  // Old lookup URLs used a report aggregate as a customer group.
+  if (params.getAll("lookupGroup").includes("VIP và Vãng lai")) {
+    const types = cardTypes.filter((type) => type !== "Thuê bao tháng" && selected(filters.type, type))
+    if (!types.length) filters.statuses = []
+    filters.type = types
+    filters.group = []
   }
   // Convert older opening-balance links to an explicit single-day period.
   if (filters.mode === "snapshot") {
@@ -478,20 +559,13 @@ export function lookupCards(
   const current = filters.mode === "current"
   const asOf = current ? today : lookupSnapshotDay(filters)
   const keyword = normalize(filters.keyword.trim())
-  const { status, alert, group } = filters
-  const alertId = cardAlertIds.find((id) => alertNames[id] === alert)
-  const matchesStatus = (card: Card) => {
-    if (!status) return true
-    if (status === "Lưu hành") return isCirculating(card)
-    if (status === "Hết hạn" || status === "Đang sử dụng")
-      return isCirculating(card) && circulationStatus(card, asOf) === status
-    return card.status === status
-  }
-  const matchesCard = (card: Card) => matchesStatus(card) && matchesCardKeyword(card, keyword) &&
-    (!group || inCirculationGroup(card, "Nhóm khách hàng", group)) &&
-    (!alert || (alertId !== undefined && card.alerts.includes(alertId)))
+  const { statuses, group } = filters
+  const alert = normalizeLookupAlerts(filters.alert)
+  const matchesCard = (card: Card) => statuses.includes(lookupCardStatus(card, asOf)) && matchesCardKeyword(card, keyword) &&
+    (!group.length || group.some((label) => inCirculationGroup(card, "Nhóm khách hàng", label))) &&
+    (!alert.length || cardAlertIds.some((id) => alert.includes(alertNames[id]) && card.alerts.includes(id)))
   if (filters.mode === "movement") {
-    const { cards, events } = movementsInScope(filters, filters.movement, thresholds)
+    const { cards, events } = movementsInScope(filters, filters.movement, thresholds, (card, park) => inLookupScope(card, filters, park))
     const matches = cards.filter(matchesCard)
     const ids = new Set(matches.map((card) => card.id))
     return {
@@ -506,7 +580,7 @@ export function lookupCards(
     period: current ? "Hiện tại" : `Kỳ ${date(filters.start)} – ${date(filters.end)} · Trạng thái hết ngày ${date(asOf)}`,
     events: null,
     cards: (current ? currentCards : snapshot(asOf, thresholds)).filter((card) =>
-      inScope(card, filters) && matchesCard(card),
+      inLookupScope(card, filters) && matchesCard(card),
     ),
   }
 }

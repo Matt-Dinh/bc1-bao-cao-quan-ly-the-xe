@@ -57,7 +57,7 @@ import {
 } from "./data"
 import type { Card } from "./data"
 import type { ReactNode } from "react"
-import { cardHistory, defaultCardLookupFilters, matchesCardKeyword, stockMetricLabels } from "./report-model"
+import { cardHistory, defaultCardLookupFilters, lookupCardStatus, lookupParkKey, lookupSelection, lookupStatusesForLifecycle, matchesCardKeyword, stockMetricLabels } from "./report-model"
 import type { CardEvent, CardLookupFilters, ReportLookupResult } from "./report-model"
 import {
   applyOperation,
@@ -735,6 +735,7 @@ export default function Operations({
   const detailRow = reportLookup ? cardRows.find((row) => row.key === detailId) : undefined
   const detail = reportLookup ? detailRow?.card : state.cards.find((c) => c.id === detailId)
   const detailEvent = detailRow?.event
+  const detailStatus = detail ? lookupCardStatus(detail, reportLookup?.asOf ?? today) : ""
   const subRows = state.subscriptions.filter(
     (s) =>
       scope.some((c) => c.id === s.cardId) &&
@@ -829,7 +830,10 @@ export default function Operations({
       case "estate": return estates.find((estate) => estate.id === card.estate)?.name || "—"
       case "park": return <>{event?.park ?? card.park}<span className="estate-code">{estates.find((estate) => estate.id === card.estate)?.short}</span></>
       case "type": return <span className={card.type === "VIP" ? "vip-label" : ""}>{card.type}</span>
-      case "status": return badge(card)
+      case "status": {
+        const status = lookupCardStatus(card, lookupResult?.asOf ?? today)
+        return <Badge tone={status === "Hết hạn" ? "amber" : statusTone(status)}>{status}</Badge>
+      }
       case "expiry": case "issued": case "lastTrip": return date(card[column])
       case "alerts": return card.alerts.map((id) => alertNames[id]).join(", ") || "—"
       case "phone": return maskedPhone(card.phone)
@@ -1101,11 +1105,12 @@ export default function Operations({
                         "Chủ thẻ": c.owner,
                         "Biển số": c.plate,
                         ...(event ? {
+                          "Trạng thái tại ngày đến": lookupCardStatus(c, lookupResult?.asOf ?? today),
                           "Thời điểm phát sinh": eventTime(event),
                           "Loại biến động": movementNames[event.kind],
                           "Trạng thái trước": event.before?.status || "—",
                           "Trạng thái sau": event.after.status,
-                        } : { "Trạng thái": c.status }),
+                        } : { "Trạng thái": screen === "lookup" ? lookupCardStatus(c, lookupResult?.asOf ?? today) : c.status }),
                         ...(reportLookup ? {
                           "Khu đô thị": estates.find((e) => e.id === c.estate)?.name || "—",
                           "Mốc tính": reportLookup.period,
@@ -1233,7 +1238,7 @@ export default function Operations({
                       {
                         [
                           "Sẵn sàng cấp từ kho bãi",
-                          "Thẻ đã cấp, đang sử dụng",
+                          "Thẻ đã cấp, đang hoạt động",
                           "Tạm ngừng sử dụng",
                           "Có biên bản, không tái sử dụng",
                         ][i]
@@ -1336,12 +1341,12 @@ export default function Operations({
                                 setPage(1)
                                 onLookup({
                                   ...defaultCardLookupFilters,
-                                  estate: row.estate,
-                                  park: row.park,
+                                  estate: [row.estate],
+                                  park: [lookupParkKey(row.estate, row.park)],
                                   keyword: search.trim(),
-                                  type: typeFilter,
-                                  vehicle: vehicleFilter,
-                                  status: cardStatuses.find((status) => status === statusFilter) || "",
+                                  type: lookupSelection(typeFilter),
+                                  vehicle: lookupSelection(vehicleFilter),
+                                  statuses: lookupStatusesForLifecycle(statusFilter),
                                 })
                                 window.scrollTo({ top: 0 })
                               }}
@@ -2566,7 +2571,7 @@ export default function Operations({
                 {detail.type} · {detail.vehicle}
               </span>
             </div>
-            {badge(detail)}
+            <Badge tone={detailStatus === "Hết hạn" ? "amber" : statusTone(detailStatus)}>{detailStatus}</Badge>
           </div>
           {detailEvent && (
             <div className="op-inline-note">
@@ -2592,6 +2597,7 @@ export default function Operations({
             <div className="detail-grid">
               {[
                 ["Mã thẻ", detail.id],
+                ["Trạng thái tra cứu", detailStatus],
                 ["Kho bãi", detail.park],
                 [
                   "Khu đô thị",

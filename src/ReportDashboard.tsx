@@ -332,17 +332,19 @@ export default function ReportDashboard({
                     />
                   ) : null
                 })}
-                <text x="72" y="72" textAnchor="middle" className="donut-total">
-                  {fmt(total)}
-                </text>
-                <text
-                  x="72"
-                  y="89"
-                  textAnchor="middle"
-                  className="donut-subtitle"
-                >
-                  thẻ lưu hành
-                </text>
+                <g role="button" tabIndex={total ? 0 : -1} className="donut-total-link" aria-disabled={!total}
+                  aria-label={`Tổng thẻ lưu hành: ${fmt(total)} thẻ. Tra cứu thẻ`}
+                  onClick={() => total && onLookup({ kind: "circulation" })}
+                  onKeyDown={(event) => {
+                    if (total && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault()
+                      onLookup({ kind: "circulation" })
+                    }
+                  }}>
+                  <circle cx="72" cy="72" r="40" fill="transparent" aria-hidden="true" />
+                  <text x="72" y="72" textAnchor="middle" className="donut-total">{fmt(total)}</text>
+                  <text x="72" y="89" textAnchor="middle" className="donut-subtitle">thẻ lưu hành</text>
+                </g>
               </svg>
             </div>
             <div className="donut-legend">
@@ -431,7 +433,9 @@ export default function ReportDashboard({
             <span className="report-eyebrow">03 / CẢNH BÁO</span>
             <Heading>Cảnh báo cần rà soát</Heading>
             <p>
-              <strong>{fmt(data.warned)} thẻ</strong> có ít nhất một cảnh báo
+              <Button variant="link" className="report-alert-total" disabled={!data.warned}
+                aria-label={`Tất cả thẻ có cảnh báo: ${fmt(data.warned)} thẻ. Tra cứu thẻ`}
+                onClick={() => onLookup({ kind: "alert", id: "all" })}>{fmt(data.warned)} thẻ</Button> có ít nhất một cảnh báo
               đến hết ngày {date(filters.end)}
             </p>
           </div>
@@ -492,7 +496,11 @@ export default function ReportDashboard({
                 {data.alerts.map((alert) => (
                   <tr key={alert.label}>
                     <td>{alert.label}</td>
-                    <td>{fmt(alert.cards.length)}</td>
+                    <td>
+                      <Button variant="link" className="number-link" disabled={!alert.cards.length}
+                        aria-label={`${alert.label}: ${fmt(alert.cards.length)} thẻ. Tra cứu thẻ`}
+                        onClick={() => onLookup({ kind: "alert", id: alert.id })}>{fmt(alert.cards.length)}</Button>
+                    </td>
                     <td>
                       <Button
                         variant="link"

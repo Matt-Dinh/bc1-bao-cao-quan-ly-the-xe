@@ -100,6 +100,7 @@ import {
   daysBetween,
   defaultCardLookupFilters,
   inCirculationGroup,
+  isReportCardLookup,
   lossBreakdown,
   lookupSnapshotDay,
   lookupCards,
@@ -241,7 +242,7 @@ function App() {
     operation === "lookup" ? readCardLookupParams(new URLSearchParams(location.search), initial.f) : null,
   )
   const [lookupFromReport, setLookupFromReport] = useState(() =>
-    operation === "lookup" && new URLSearchParams(location.search).get("lookupFrom") === "report",
+    operation === "lookup" && isReportCardLookup(new URLSearchParams(location.search)),
   )
   const [detail, setDetail] = useState<Card | null>(null)
   const [detailTab, setDetailTab] = useState("Thông tin thẻ")
@@ -666,7 +667,7 @@ function App() {
             "Tổng thẻ": stockCount + circulating.length,
             "Tồn kho": stockCount,
             "Lưu hành": circulating.length,
-            "Đang sử dụng": active,
+            "Đang hoạt động": active,
             "Khóa / hết hạn": locked + expired,
             "Cấp ra": sumValues[3],
             "Thu về": sumValues[4],
@@ -716,7 +717,7 @@ function App() {
               [groupBy]: group.label,
               "Đang lưu hành": group.cards.filter((c) => c.estate === e.id)
                 .length,
-              "Đang sử dụng": group.cards.filter(
+              "Đang hoạt động": group.cards.filter(
                 (c) =>
                   c.estate === e.id &&
                   c.status === "Đang hoạt động" &&
@@ -796,7 +797,7 @@ function App() {
                 "Khu đô thị": e.name,
                 [groupBy]: category,
                 "Đang lưu hành": rows.length,
-                "Đang sử dụng": rows.filter(
+                "Đang hoạt động": rows.filter(
                   (c) =>
                     c.status === "Đang hoạt động" &&
                     (!c.expiry || c.expiry >= applied.end),
@@ -1326,7 +1327,7 @@ function App() {
                   </th>
                   {[
                     "Đang lưu hành",
-                    "Đang sử dụng",
+                    "Đang hoạt động",
                     "Khóa",
                     "Hết hạn",
                     "Tỷ lệ hoạt động",
@@ -1379,7 +1380,7 @@ function App() {
             </span>
             <span>
               <Info size={13} />
-              Đang lưu hành = Đang sử dụng + Khóa + Hết hạn
+              Đang lưu hành = Đang hoạt động + Khóa + Hết hạn
             </span>
           </div>
         </section>

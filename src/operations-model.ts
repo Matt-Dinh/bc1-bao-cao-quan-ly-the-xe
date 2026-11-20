@@ -1,13 +1,8 @@
-import { cardTypes, estates, maxDate, normalize, today, vehicles } from "./data"
+import { cardStatuses, cardTypes, estates, maxDate, normalize, today, vehicles } from "./data"
 import type { Card } from "./data"
 import { snapshot } from "./report-model"
 
-export const cardStatuses = [
-  "Trong kho",
-  "Đang hoạt động",
-  "Khóa",
-  "Mất / hỏng",
-] as const
+export { cardStatuses } from "./data"
 export const operationMenus = [
   {
     id: "inventory",

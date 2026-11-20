@@ -70,6 +70,10 @@
 .report-donut circle[role="button"]:hover, .report-donut circle[role="button"]:focus-visible { filter: brightness(.9); stroke-width: 20px; outline: none; }
 .donut-total { fill: #2e3b4e; font-size: 23px; font-weight: 650; letter-spacing: -.5px; }
 .donut-subtitle { fill: #98a0ac; font-size: 8px; }
+.donut-total-link { cursor: pointer; }
+.donut-total-link:hover .donut-total, .donut-total-link:focus-visible .donut-total { fill: var(--color-brand); text-decoration: underline; }
+.donut-total-link[aria-disabled="true"] { pointer-events: none; cursor: default; }
+.report-chart-heading .report-alert-total { display: inline; min-height: 0; padding: 0; font-size: inherit; font-weight: 600; vertical-align: baseline; }
 .donut-legend { display: flex; flex-direction: column; gap: 7px; min-width: 0; max-height: 190px; overflow-y: auto; }
 .donut-legend-row.button { display: flex; justify-content: flex-start; gap: 8px; padding: 5px 2px; min-height: 30px; font-size: 10px; border: 0; }
 .donut-legend-row > span { flex: 1; text-align: left; min-width: 0; white-space: normal; line-height: 1.5; }

@@ -73,6 +73,7 @@ export const estates = [
 ]
 export const cardTypes = ["VIP", "Thuê bao tháng", "Vãng lai"]
 export const vehicles = ["Ô tô", "Xe máy", "Xe đạp"]
+export const cardStatuses = ["Trong kho", "Đang hoạt động", "Khóa", "Mất / hỏng"] as const
 export const customerGroups = [
   "Cư dân",
   "Gian hàng",
