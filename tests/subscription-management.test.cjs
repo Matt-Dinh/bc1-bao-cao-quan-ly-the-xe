@@ -58,7 +58,6 @@ function setup(type = "Thuê bao tháng") {
   const vehicleId = state.directory.vehicles[0].id
   const service = state.directory.services.find(
     (row) =>
-      row.parkId === "A:0" &&
       row.vehicle === "Ô tô" &&
       row.category === "Thuê bao",
   )
@@ -128,7 +127,7 @@ test("directory references preserve seeded customers, vehicles, services and uni
     assert.ok(
       profile.lots.every((lot) =>
         directory.services.some(
-          (row) => row.id === lot.serviceId && row.parkId === lot.parkId,
+          (row) => row.id === lot.serviceId,
         ),
       ),
     )
@@ -137,7 +136,7 @@ test("directory references preserve seeded customers, vehicles, services and uni
 test("registering reuses identities, supports several lots and does not issue a card implicitly", () => {
   const { state, input } = setup()
   const second = state.directory.services.find(
-    (row) => row.parkId === "A:1" && row.vehicle === "Ô tô",
+    (row) => row.category === "Thuê bao" && row.vehicle === "Ô tô",
   )
   const before = JSON.stringify(state)
   const next = saveSubscriber(state, {
@@ -462,4 +461,33 @@ test("subscription cancellation never returns a physical card to stock and canno
     () => saveSubscriber(next, subscriberInput(next, sub.id)),
     /chỉ được xem/,
   )
+})
+
+test("service packages are not tied to a parking lot and can be reused across lots", () => {
+  const { state, input } = setup()
+  const next = saveManagedService(state, {
+    id: "",
+    name: "Gói ô tô chỉ biển số",
+    vehicle: "Ô tô",
+    category: "Thuê bao",
+    control: "Biển số",
+    pricing: "Theo tháng",
+    price: 1500000,
+    validFrom: "2026-09-01",
+    validTo: "",
+    active: true,
+    note: "",
+  })
+  const service = next.directory.services[0]
+  assert.equal("parkId" in service, false)
+  assert.equal(service.control, "Biển số")
+  assert.throws(() => saveManagedService(next, { ...service, id: "", control: "Thẻ" }), /Cấu hình dịch vụ/)
+  const saved = saveSubscriber(next, {
+    ...input,
+    lots: [
+      { parkId: "A:0", serviceId: service.id, active: true },
+      { parkId: "A:1", serviceId: service.id, active: true },
+    ],
+  })
+  assert.deepEqual(saved.directory.profiles[0].lots.map((lot) => lot.serviceId), [service.id, service.id])
 })

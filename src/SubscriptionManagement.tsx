@@ -127,7 +127,6 @@ const emptyVehicle = (estate = "", vehicle = "Ô tô"): ManagedVehicle => ({
 })
 const emptyService = (): ManagedService => ({
   id: "",
-  parkId: "",
   name: "",
   vehicle: "Ô tô",
   category: "Thuê bao",
@@ -560,13 +559,9 @@ export default function SubscriptionManagement({
   )
   const serviceRows = directory.services.filter(
     (row) =>
-      (!estate ||
-        managementParks.find((park) => park.id === row.parkId)?.estate ===
-          estate) &&
       (!status || String(row.active) === status) &&
       (!kind || row.category === kind) &&
       (!vehicle || row.vehicle === vehicle) &&
-      (!park || row.parkId === park) &&
       normalize([row.id, row.name].join(" ")).includes(normalize(search)),
   )
   const count =
@@ -750,7 +745,7 @@ export default function SubscriptionManagement({
               placeholder="Nhập mã, tên, biển số…"
             />
           </Field>
-          <Field label="Khu đô thị">
+          {screen !== "services" && <Field label="Khu đô thị">
             <Select
               aria-label="Khu đô thị"
               value={estate}
@@ -763,7 +758,7 @@ export default function SubscriptionManagement({
                 ...estateOptions,
               ]}
             />
-          </Field>
+          </Field>}
           <Field
             label={
               screen === "subscriptions" ? "Trạng thái thuê bao" : "Trạng thái"
@@ -829,7 +824,7 @@ export default function SubscriptionManagement({
                   ]}
                 />
               </Field>
-              <Field label="Bãi xe">
+              {screen === "subscriptions" && <Field label="Bãi xe">
                 <Select
                   aria-label="Bãi xe"
                   value={park}
@@ -841,7 +836,7 @@ export default function SubscriptionManagement({
                       .map((row) => ({ value: row.id, label: row.label })),
                   ]}
                 />
-              </Field>
+              </Field>}
             </>
           )}
         </div>
@@ -914,7 +909,6 @@ export default function SubscriptionManagement({
                         ]
                       : [
                           "Mã / Dịch vụ",
-                          "Bãi xe",
                           "Phương tiện / Nhóm",
                           "Kiểm soát",
                           "Đơn giá",
@@ -1126,12 +1120,6 @@ export default function SubscriptionManagement({
                         {row.name}
                       </Button>
                       <span className="sm-secondary">{id}</span>
-                    </td>
-                    <td>
-                      {
-                        managementParks.find((park) => park.id === row.parkId)
-                          ?.label
-                      }
                     </td>
                     <td>
                       {row.vehicle}
@@ -1476,12 +1464,6 @@ export default function SubscriptionManagement({
               <div className="sm-detail-grid">
                 {[
                   ["Mã dịch vụ", selectedService.id],
-                  [
-                    "Bãi xe",
-                    managementParks.find(
-                      (park) => park.id === selectedService.parkId,
-                    )?.label,
-                  ],
                   ["Loại phương tiện", selectedService.vehicle],
                   ["Nhóm dịch vụ", selectedService.category],
                   ["Kiểm soát", selectedService.control],
@@ -1727,23 +1709,6 @@ export default function SubscriptionManagement({
                       maxLength={255}
                       value={editor.value.name}
                       onChange={(event) => change({ name: event.target.value })}
-                    />
-                  </Field>
-                  <Field label="Bãi xe" required>
-                    <Select
-                      aria-label="Bãi xe dịch vụ"
-                      disabled={!!editor.value.id}
-                      value={editor.value.parkId}
-                      onChange={(event) =>
-                        change({ parkId: event.target.value })
-                      }
-                      options={[
-                        { value: "", label: "Chọn bãi xe" },
-                        ...managementParks.map((row) => ({
-                          value: row.id,
-                          label: row.label,
-                        })),
-                      ]}
                     />
                   </Field>
                   <Field label="Phương tiện">
@@ -2202,7 +2167,6 @@ export default function SubscriptionManagement({
                                 ...directory.services
                                   .filter(
                                     (service) =>
-                                      service.parkId === lot.parkId &&
                                       service.vehicle === value.vehicle &&
                                       service.category === "Thuê bao" &&
                                       (service.active ||

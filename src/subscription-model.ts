@@ -76,7 +76,6 @@ export interface ManagedVehicle {
 }
 export interface ManagedService {
   id: string
-  parkId: string
   name: string
   vehicle: string
   category: "Thuê bao" | "Vãng lai"
@@ -172,11 +171,9 @@ export function seedSubscriptionDirectory(
     services: [],
     profiles: [],
   }
-  for (const park of managementParks)
-    for (const vehicle of vehicles) {
+  for (const vehicle of vehicles) {
       result.services.push({
-        id: `DV-${park.id}-${vehicles.indexOf(vehicle)}`,
-        parkId: park.id,
+        id: `DV-TB-${vehicles.indexOf(vehicle) + 1}`,
         name: `Gói thuê bao ${vehicle.toLocaleLowerCase("vi")}`,
         vehicle,
         category: "Thuê bao",
@@ -192,7 +189,6 @@ export function seedSubscriptionDirectory(
     }
   result.services.push({
     id: "DV-VL-001",
-    parkId: "A:0",
     name: "Vãng lai ô tô",
     vehicle: "Ô tô",
     category: "Vãng lai",
@@ -256,7 +252,7 @@ export function seedSubscriptionDirectory(
       (row) => row.estate === card.estate && row.park === card.park,
     )
     const service = result.services.find(
-      (row) => row.parkId === park?.id && row.vehicle === card.vehicle,
+      (row) => row.category === "Thuê bao" && row.vehicle === card.vehicle,
     )
     result.profiles.push({
       id: sub.id,
@@ -471,16 +467,8 @@ export function saveManagedService(
 ): OperationState {
   const directory = directoryOf(state)
   const old = directory.services.find((row) => row.id === input.id)
-  if (
-    !managementParks.some((park) => park.id === input.parkId) ||
-    !input.name.trim() ||
-    !vehicles.includes(input.vehicle)
-  )
-    fail("Nhập tên dịch vụ, bãi xe và loại phương tiện.")
-  if (old && old.parkId !== input.parkId)
-    fail(
-      "Không đổi bãi của dịch vụ đã tạo. Dùng Sao chép để tạo gói tại bãi khác.",
-    )
+  if (!input.name.trim() || !vehicles.includes(input.vehicle))
+    fail("Nhập tên dịch vụ và loại phương tiện.")
   if (
     !["Thuê bao", "Vãng lai"].includes(input.category) ||
     !["Theo tháng", "Theo giờ", "Theo lượt", "Miễn phí"].includes(
@@ -641,7 +629,6 @@ export function saveSubscriber(
     const service = directory.services.find(
       (row) =>
         row.id === lot.serviceId &&
-        row.parkId === lot.parkId &&
         row.vehicle === input.vehicle &&
         row.category === "Thuê bao",
     )
