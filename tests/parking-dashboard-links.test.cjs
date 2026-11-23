@@ -50,6 +50,26 @@ const Dashboard = load("ParkingDashboard").default
 const Billing = load("ParkingSupplementBilling").ParkingSupplementBilling
 const { ParkingTripList, ParkingTripDetail, TripLookupFields, readTripLookupParams } = load("ParkingTrips")
 const { tripExport } = load("parking-export")
+const { ParkingFiltersBar } = load("parking-ui")
+
+test("trip lookup renders all seven option filters with the existing card multi-select control", () => {
+  const filters = { estate: "", site: "", vehicle: "Ô tô", start: "2026-11-18", end: "2026-11-18" }
+  const params = new URLSearchParams({ estate: JSON.stringify(['A', 'B']), vehicle: JSON.stringify(['Ô tô', 'Xe máy']),
+    group: JSON.stringify(['Vãng lai', 'VIP']), lane: JSON.stringify(['Làn vào 1', 'Làn ra 1']) })
+  const html = renderToStaticMarkup(React.createElement(ParkingFiltersBar, {
+    filters, cutoff: filters.end, access: parking.demoAccess, error: '', change() {},
+    lookup: { params, error() { return '' }, fields: (params, update) => React.createElement(TripLookupFields, { params, update, data: null }) },
+  }))
+  assert.equal((html.match(/aria-haspopup="dialog"/g) || []).length, 7)
+  for (const label of ['Khu đô thị', 'Bãi xe', 'Phương tiện', 'Trạng thái lượt xe', 'Nhóm khách hàng', 'Làn xe', 'Cảnh báo'])
+    assert.ok(html.includes(`aria-label="${label}" aria-haspopup="dialog"`), label)
+  for (const label of ['Ô tô', 'Xe máy', 'Vãng lai', 'VIP', 'Làn vào 1', 'Làn ra 1'])
+    assert.ok(html.includes(`class="lookup-status-tag">${label}`), label)
+  assert.ok(!html.includes('<select'))
+  const read = readTripLookupParams(new URLSearchParams('estate=A&estate=B&group=VIP'))
+  assert.deepEqual(JSON.parse(read.get('estate')), ['A', 'B'])
+  assert.equal(read.get('group'), 'VIP')
+})
 
 test("lookup shows the recorded exit after the reporting cutoff without changing historical status or totals", () => {
   const settings = readSettings(), trips = seedTrips("2026-11-19")
@@ -126,9 +146,10 @@ test("missing-exit filter excludes trips that already exited after the historica
   for (const plate of [base.plate, "FUTURE-123", "OUTSIDE-123", "MOTO-123"]) assert.ok(!html.includes(plate), plate)
   assert.equal(readTripLookupParams(params).get("state"), "missing-exit")
   const fields = renderToStaticMarkup(React.createElement(TripLookupFields, { params, update() {}, data }))
-  assert.ok(fields.includes('value="missing-exit" selected=""'))
+  assert.ok(fields.includes('aria-label="Trạng thái lượt xe"'))
+  assert.ok(fields.includes('class="lookup-status-tag">Chưa ghi nhận giờ ra'))
   assert.ok(fields.includes("Chưa ghi nhận giờ ra"))
-  assert.ok(fields.includes("Đang trong bãi tại mốc tra cứu"))
+  assert.ok(!fields.includes('<select aria-label="Trạng thái lượt xe"'))
   // Historical parking status remains available for reconciliation with reports.
   const historical = renderToStaticMarkup(React.createElement(ParkingTripList, {
     data, settings, filters, params: new URLSearchParams({ state: "Đang trong bãi" }),

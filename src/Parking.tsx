@@ -62,6 +62,7 @@ import { orphanTransactions } from "./parking-supplement-data"
 import { tripRevenueAmounts } from "./revenue-model"
 import { getParkingFeeService } from "./parking-fees"
 import { createDemoParkingFeeService } from "./parking-fees-demo"
+import { tripLookupScope, tripLookupScopeDenied, tripMatchesScope } from "./parking-lookup"
 
 type Navigate = (
   screen: ParkingScreen,
@@ -118,12 +119,14 @@ export default function Parking({
   }), [])
   const parkingFeeService = revenue?.feeService ?? getParkingFeeService() ?? demoFeeService
   const defaults = defaultParkingFilters(cutoff)
+  const lookupScope = useMemo(() => screen === "parking-trips" ? tripLookupScope(params) : undefined,
+    [screen, JSON.stringify(params.getAll("estate")), JSON.stringify(params.getAll("site")), JSON.stringify(params.getAll("vehicle"))])
   const filters = useMemo<ParkingFilters>(
     () => ({
-      estate: params.get("estate") || "",
-      site: params.get("site") || "",
+      estate: lookupScope ? lookupScope.estates.length === 1 ? lookupScope.estates[0] : "" : params.get("estate") || "",
+      site: lookupScope ? lookupScope.sites.length === 1 ? lookupScope.sites[0] : "" : params.get("site") || "",
       vehicle:
-        parkingVehicles.find((vehicle) => params.get("vehicle") === vehicle) ??
+        parkingVehicles.find((vehicle) => (lookupScope ? lookupScope.vehicles[0] : params.get("vehicle")) === vehicle) ??
         defaults.vehicle,
       start: params.get("start") ?? defaults.start,
       end: params.get("end") ?? defaults.end,
@@ -136,6 +139,7 @@ export default function Parking({
       params.get("end"),
       defaults.start,
       defaults.end,
+      lookupScope,
     ],
   )
   const menu = parkingMenus.find((menu) => menu.id === screen)!
@@ -148,14 +152,14 @@ export default function Parking({
     : undefined
   const denied =
     !canOpen(access, screen) ||
-    (!!filters.estate &&
+    (lookupScope ? tripLookupScopeDenied(lookupScope, access) : (!!filters.estate &&
       !scope.some((site) => site.estate === filters.estate)) ||
     (!!filters.site &&
       !scope.some(
         (site) =>
           site.id === filters.site &&
           (!filters.estate || site.estate === filters.estate),
-      )) ||
+      ))) ||
     (!!trip && !scope.some((site) => site.id === trip.site)) ||
     (!!params.get("configEstate") &&
       !scope.some((site) => site.estate === params.get("configEstate")))
@@ -176,14 +180,14 @@ export default function Parking({
     data: ReturnType<typeof buildParkingReport> | null
     error?: boolean
   } | null>(null)
-  const key = `${screen}/${access.role}/${access.estate}/${filters.estate}/${filters.site}/${filters.start}/${filters.end}/${filters.vehicle}/${attempt}`
+  const key = `${screen}/${access.role}/${access.estate}/${filters.estate}/${filters.site}/${filters.start}/${filters.end}/${filters.vehicle}/${JSON.stringify(lookupScope)}/${attempt}`
   useEffect(() => {
     if (!trips || error || denied || configuration || tripId) return
     const timer = window.setTimeout(() => {
       try {
         setCalculation({
           key,
-          data: buildParkingReport(trips, settings, filters, access),
+          data: buildParkingReport(trips, settings, filters, access, lookupScope),
         })
       } catch {
         setCalculation((current) => ({
@@ -304,9 +308,9 @@ export default function Parking({
   const changes = model.changes.filter(
     (row) =>
       scope.some((site) => site.id === row.trip.site) &&
-      row.trip.vehicle === filters.vehicle &&
+      (lookupScope ? tripMatchesScope(row.trip, lookupScope) : row.trip.vehicle === filters.vehicle &&
       (!filters.estate || siteById(row.trip.site)?.estate === filters.estate) &&
-      (!filters.site || row.trip.site === filters.site) &&
+      (!filters.site || row.trip.site === filters.site)) &&
       row.day >= filters.start &&
       row.day <= filters.end,
   )
@@ -429,7 +433,7 @@ export default function Parking({
       (trip) =>
         trip.exited !== null &&
         trip.exited < trip.entered &&
-        trip.vehicle === filters.vehicle &&
+        (lookupScope ? tripMatchesScope(trip, lookupScope) : trip.vehicle === filters.vehicle) &&
         scope.some((site) => site.id === trip.site) &&
         inWindow(
           trip.exited,

@@ -25,6 +25,7 @@ const settings = readSettings()
 const fees = model("parking-fees")
 const revenue = model("revenue-model")
 const { createDemoParkingFeeService } = model("parking-fees-demo")
+const lookup = model("parking-lookup")
 const filters = { estate: "A", site: "A:0", vehicle: "Ô tô", start: "2026-11-01", end: "2026-11-02" }
 const at = (day, hour) => parking.dayStart(day) + hour * 60
 const trip = (id, entered, exited) => ({
@@ -56,6 +57,66 @@ function fromReport(metric, options = {}) {
 test("only the three supported vehicle types appear in configuration and sample trips", () => {
   assert.deepEqual(parking.parkingVehicles, ["Ô tô", "Xe máy", "Xe đạp"])
   assert.ok(seedTrips("2026-11-19").every((row) => parking.parkingVehicles.includes(row.vehicle)))
+})
+
+test("trip multi selections retain legacy links, repeated params, special characters and reloads", () => {
+  for (const values of [[], ["Ô tô"], ["Ô tô", "Xe máy"], ["x,y", "a+b", "a:b"]]) {
+    const encoded = lookup.tripLookupValue(values)
+    const params = new URLSearchParams(encoded ? { vehicle: encoded } : {})
+    assert.deepEqual(lookup.tripLookupValues(new URLSearchParams(params.toString()), "vehicle"), values)
+  }
+  assert.deepEqual(lookup.tripLookupValues(new URLSearchParams('estate=A&estate=B&estate=A'), 'estate'), ['A', 'B'])
+  assert.deepEqual(lookup.tripLookupValues(new URLSearchParams({ state: "Đang trong bãi" }), "state"), ["Đang trong bãi"])
+  assert.equal(lookup.tripLookupValue(["VIP", "VIP"]), "VIP")
+  assert.deepEqual(lookup.tripLookupValues(new URLSearchParams({ site: "[broken" }), "site"), ["[broken"])
+})
+
+test("multiple sites, estates and vehicle types form unions while scope fields intersect and respect access", () => {
+  const rows = [
+    { ...trips[0], id: 'a-car', vehicle: 'Ô tô', site: 'A:0' },
+    { ...trips[0], id: 'a-bike', vehicle: 'Xe máy', site: 'A:0' },
+    { ...trips[0], id: 'b-car', vehicle: 'Ô tô', site: 'B:2' },
+    { ...trips[0], id: 'b-cycle', vehicle: 'Xe đạp', site: 'B:2' },
+    { ...trips[0], id: 'c-car', vehicle: 'Ô tô', site: 'C:0' },
+  ]
+  const params = new URLSearchParams({ estate: lookup.tripLookupValue(['A', 'B']), site: lookup.tripLookupValue(['A:0', 'B:2']),
+    vehicle: lookup.tripLookupValue(['Ô tô', 'Xe máy']) })
+  const scope = lookup.tripLookupScope(params)
+  const report = parking.buildParkingReport(rows, settings, filters, parking.demoAccess, scope)
+  assert.deepEqual(report.periodTrips.map((row) => row.id).sort(), ['a-bike', 'a-car', 'b-car'])
+  assert.equal(report.total.closing, 3)
+  assert.equal(new Set(report.bySite.flatMap((site) => site.trips).map((row) => row.id)).size, 3)
+  const all = parking.buildParkingReport(rows, settings, filters, parking.demoAccess, lookup.tripLookupScope(new URLSearchParams()))
+  assert.equal(all.periodTrips.length, 5)
+  assert.ok(lookup.tripLookupScopeDenied(scope, { role: 'manager', estate: 'A' }))
+  assert.ok(!lookup.tripLookupScopeDenied(scope, parking.demoAccess))
+  const restricted = parking.buildParkingReport(rows, settings, filters, { role: 'manager', estate: 'A' }, scope)
+  assert.deepEqual(restricted.periodTrips.map((row) => row.id).sort(), ['a-bike', 'a-car'])
+  assert.ok(lookup.tripLookupScopeDenied({ ...scope, estates: ['A'], sites: ['B:2'] }, parking.demoAccess))
+})
+
+test("status, group, lane and alert choices union within each field and intersect across fields", () => {
+  const rows = [
+    { ...trips[0], id: 'open', group: 'Vãng lai', due: 10000, paid: 0 },
+    { ...trips[1], id: 'exited', group: 'VIP', due: 10000, paid: 0 },
+    { ...trips[2], id: 'other-lane', group: 'Thuê bao', laneIn: 'Làn vào 2', laneOut: 'Làn ra 2' },
+  ]
+  const params = new URLSearchParams({ state: lookup.tripLookupValue(['missing-exit', 'Đã ra']),
+    group: lookup.tripLookupValue(['Vãng lai', 'VIP']), lane: lookup.tripLookupValue(['Làn vào 1', 'Làn ra 1']) })
+  const match = () => rows.filter((row) => lookup.tripMatchesLookup(row, params, end, filters, settings, new Map(), end))
+  assert.deepEqual(match().map((row) => row.id), ['open', 'exited'])
+  params.set('alert', lookup.tripLookupValue([parking.alertTabs[2], parking.alertTabs[3]]))
+  assert.deepEqual(match().map((row) => row.id), ['exited'])
+  params.delete('alert'); params.delete('group'); params.delete('state'); params.delete('lane')
+  assert.equal(match().length, 3)
+})
+
+test("multi-vehicle lookup does not apply a car capacity warning to another vehicle", () => {
+  const car = { ...trips[0], vehicle: 'Ô tô' }, bike = { ...car, vehicle: 'Xe máy' }
+  const map = parking.exceededHoursBySite([{ site: car.site, vehicle: 'Ô tô', day: filters.start,
+    hours: [{ exceeded: true, end: start + 60 }] }])
+  assert.ok(parking.parkedDuringExceededHour(car, map))
+  assert.ok(!parking.parkedDuringExceededHour(bike, map))
 })
 
 test("ordinary lookup includes cars entering before the period and excludes the next period", () => {

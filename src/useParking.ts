@@ -154,14 +154,14 @@ export default function useParking(
       ],
     }))
   }
-  const exportFile: ExportParking = (name, make, count = 0) => {
-    if (count > 100000) {
+  const exportFile: ExportParking = (name, make, count = 0, limits = { rows: 100000, simultaneous: 2, days: 1 }) => {
+    if (count > limits.rows) {
       notify(limitMessage)
       return
     }
     const pending = running.current.get(account) ?? 0
-    if (count > 10000 && pending >= 2) {
-      notify("Bạn đang tạo 2 file. Vui lòng chờ một file hoàn tất.")
+    if (count > 10000 && pending >= limits.simultaneous) {
+      notify(`Bạn đang tạo ${limits.simultaneous} file. Vui lòng chờ một file hoàn tất.`)
       return
     }
     const stamp = minuteIso(vnNow()).replace(/\D/g, "")
@@ -175,8 +175,8 @@ export default function useParking(
       try {
         const workbook = make()
         const detailCount =
-          workbook["6-ChiTiet"]?.length ?? workbook["Lượt xe"]?.length ?? count
-        if (detailCount > 100000) {
+          workbook["6-ChiTiet"]?.length ?? workbook["7-ChiTiet"]?.length ?? workbook["Lượt xe"]?.length ?? count
+        if (detailCount > limits.rows) {
           notify(limitMessage)
           return
         }
@@ -194,7 +194,7 @@ export default function useParking(
             name: filename,
             url,
             owner: account,
-            expires: Date.now() + dayMs,
+            expires: Date.now() + limits.days * dayMs,
           }
           readyExports.current.set(file.id, file)
           setExports((current) => [file, ...current])
@@ -202,7 +202,7 @@ export default function useParking(
             readyExports.current.delete(file.id)
             URL.revokeObjectURL(url)
             setExports((current) => current.filter(({ id }) => id !== file.id))
-          }, dayMs)
+          }, limits.days * dayMs)
         }
       } catch {
         notify("Không thể xuất dữ liệu. Vui lòng thử lại.")

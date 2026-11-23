@@ -1,6 +1,8 @@
 import { cardStatuses, cardTypes, estates, maxDate, normalize, today, vehicles } from "./data"
 import type { Card } from "./data"
 import { snapshot } from "./report-model"
+import { seedSubscriptionDirectory } from "./subscription-model"
+import type { SubscriptionDirectory } from "./subscription-model"
 
 export { cardStatuses } from "./data"
 export const operationMenus = [
@@ -21,9 +23,12 @@ export const operationMenus = [
   {
     id: "subscriptions",
     group: "Quản lý thuê bao",
-    title: "Thuê bao & thẻ VIP",
-    description: "Đăng ký thuê bao, kích hoạt và cấp lại thẻ từ kho của bãi.",
+    title: "Danh sách thuê bao",
+    description: "Quản lý thuê bao tháng và VIP, khách hàng, xe, bãi dịch vụ và thẻ được cấp.",
   },
+  { id: "customers", group: "Khách hàng", title: "Khách hàng", description: "Quản lý hồ sơ khách hàng dùng chung cho các thuê bao." },
+  { id: "vehicles", group: "Quản lý xe", title: "Danh sách xe", description: "Quản lý phương tiện và các thuê bao đang sử dụng xe." },
+  { id: "services", group: "Dịch vụ", title: "Danh sách dịch vụ", description: "Quản lý gói dịch vụ, chế độ kiểm soát và giá theo bãi xe." },
   {
     id: "handoffs",
     group: "Quản lý thẻ",
@@ -118,6 +123,7 @@ export interface ActivityEntry {
   reason: string
 }
 export interface OperationState {
+  directory?: SubscriptionDirectory
   cards: Card[]
   lots: Lot[]
   handoffs: Handoff[]
@@ -126,7 +132,7 @@ export interface OperationState {
   activity: ActivityEntry[]
 }
 export function seedOperations(): OperationState {
-  const base = snapshot(maxDate)
+  const base = snapshot(maxDate).map((card) => card.status === "Trong kho" ? { ...card, subscription: "" } : card)
   const lots: Lot[] = []
   const added: Card[] = []
   estates.forEach((e) =>
@@ -168,7 +174,7 @@ export function seedOperations(): OperationState {
       })
     }),
   )
-  return {
+  const result: OperationState = {
     cards: [...added, ...base],
     lots,
     handoffs: [
@@ -232,6 +238,7 @@ export function seedOperations(): OperationState {
       reason: `Nhập lô ${c.batch} · ${c.park}.`,
     })),
   }
+  return { ...result, directory: seedSubscriptionDirectory(result.cards, result.subscriptions) }
 }
 interface ImportAction {
   kind: "import"

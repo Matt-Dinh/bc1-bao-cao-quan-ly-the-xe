@@ -16,6 +16,11 @@ interface SelectOption {
   value: string
   label: string
 }
+type SelectItem = string | SelectOption
+interface SelectGroup {
+  group: string
+  options: SelectItem[]
+}
 export function Button({
   className = "",
   variant = "default",
@@ -67,23 +72,20 @@ export function Select({
   className = "",
   ...props
 }: SelectHTMLAttributes<HTMLSelectElement> & {
-  options: Array<string | SelectOption>
+  options: Array<SelectItem | SelectGroup>
 }) {
+  const renderOption = (option: SelectItem) => {
+    const { value, label } = typeof option === "string" ? { value: option, label: option } : option
+    return <option key={value} value={value}>{label}</option>
+  }
   return (
     <div className={`select-wrap ${className}`}>
       {createElement(
         "select",
         { ...props, className: "input" },
-        options.map((o) =>
-          createElement(
-            "option",
-            {
-              key: typeof o === "string" ? o : o.value,
-              value: typeof o === "string" ? o : o.value,
-            },
-            typeof o === "string" ? o : o.label,
-          ),
-        ),
+        options.map((item) => typeof item !== "string" && "group" in item
+          ? <optgroup key={item.group} label={item.group}>{item.options.map(renderOption)}</optgroup>
+          : renderOption(item)),
       )}
       <ChevronDown size={14} />
     </div>

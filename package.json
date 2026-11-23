@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "format": "oxfmt",
     "test:parking": "node --test tests/parking-lookup.test.cjs tests/parking-dashboard-links.test.cjs",
-    "test": "tsc src/data.ts src/report-model.ts src/operations-model.ts --outDir /tmp/vparking-model-tests --module commonjs --target ES2020 --skipLibCheck && node --test tests/report-model.test.cjs tests/operations.test.cjs"
+    "test": "tsc src/data.ts src/report-model.ts src/operations-model.ts --outDir /tmp/vparking-model-tests --module commonjs --target ES2020 --skipLibCheck && node --test tests/report-model.test.cjs tests/operations.test.cjs tests/subscription-management.test.cjs"
   },
   "dependencies": {
     "lucide-react": "^1.68.0",

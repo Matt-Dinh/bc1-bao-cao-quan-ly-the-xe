@@ -13,6 +13,9 @@
 .parking-trip-fields > .filter-grid { display: contents; }
 .parking-trip-fields .field-label { font-size: 10px; }
 .parking-trip-fields .input { font-size: 11px; height: 35px; }
+.parking-filter-panel:has(.parking-trip-fields) { overflow: visible; }
+.parking-trip-fields .lookup-status-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; height: auto; min-height: 35px; }
+.parking-trip-fields > .filter-grid > .lookup-multi-field:last-child .lookup-status-popup { left: auto; right: 0; }
 .parking-trip-fields > .lookup-time-hint { grid-column: 1 / -1; margin: 0; }
 .parking-lookup-context { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; border-top: 1px solid var(--color-border); padding-top: 12px; font-size: 11px; color: #425d80; }
 .parking-lookup-context strong { font-weight: 550; }

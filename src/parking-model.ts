@@ -164,6 +164,11 @@ export interface ParkingFilters {
   start: string
   end: string
 }
+export interface ParkingTripScope {
+  estates: readonly string[]
+  sites: readonly string[]
+  vehicles: readonly Vehicle[]
+}
 export const defaultParkingFilters = (
   cutoff = lastReportDay(),
 ): ParkingFilters => ({
@@ -484,6 +489,7 @@ function openWindows(day: string, schedule: Schedule, previous?: Schedule) {
 }
 export interface SiteDay extends Counts {
   site: string
+  vehicle: Vehicle
   day: string
   hours: Interval[]
   capacity?: Capacity
@@ -561,6 +567,7 @@ function siteDay(
   })
   return {
     site,
+    vehicle,
     day,
     hours,
     capacity,
@@ -704,6 +711,7 @@ export function buildParkingReport(
   settings: ParkingSettings,
   filters: ParkingFilters,
   access: ParkingAccess,
+  selection?: ParkingTripScope,
 ) {
   const first = filters.start < goLive ? goLive : filters.start
   const days = daysIn(first, filters.end)
@@ -711,12 +719,13 @@ export function buildParkingReport(
     end = dayStart(filters.end) + dayMinutes
   const sites = allowedSites(access).filter(
     (site) =>
-      (!filters.estate || filters.estate === site.estate) &&
-      (!filters.site || filters.site === site.id),
+      (selection ? !selection.estates.length || selection.estates.includes(site.estate) : !filters.estate || filters.estate === site.estate) &&
+      (selection ? !selection.sites.length || selection.sites.includes(site.id) : !filters.site || filters.site === site.id),
   )
+  const vehicles = selection ? selection.vehicles.length ? selection.vehicles : parkingVehicles : [filters.vehicle]
   const valid = trips.filter(
     (trip) =>
-      trip.vehicle === filters.vehicle &&
+      vehicles.includes(trip.vehicle) &&
       (trip.exited === null || trip.exited >= trip.entered),
   )
   const scoped = valid.filter((trip) =>
@@ -730,7 +739,7 @@ export function buildParkingReport(
       (row) =>
         !row.canceled &&
         row.site === site.id &&
-        row.vehicle === filters.vehicle &&
+        vehicles.includes(row.vehicle) &&
         row.effective <= filters.end,
     )
     if (
@@ -738,9 +747,9 @@ export function buildParkingReport(
       (!declared && !trips.some((trip) => touches(trip, start, end)))
     )
       return []
-    const daily = days.map((day) =>
-      siteDay(trips, settings, site.id, filters.vehicle, day),
-    )
+    const daily = vehicles.flatMap((vehicle) => days.map((day) =>
+      siteDay(trips.filter((trip) => trip.vehicle === vehicle), settings, site.id, vehicle, day),
+    ))
     return [{ ...site, trips, daily, total: aggregateDays(daily) }]
   })
   const rows = bySite.flatMap((site) => site.daily)
@@ -833,17 +842,18 @@ export function exceededHoursBySite(rows: SiteDay[], days?: string[]) {
   const hoursBySite = new Map<string, number[]>()
   for (const row of rows) {
     if (days && !days.includes(row.day)) continue
-    const hours = hoursBySite.get(row.site) ?? []
+    const key = `${row.site}/${row.vehicle}`
+    const hours = hoursBySite.get(key) ?? []
     for (const hour of row.hours) {
       if (hour.exceeded) hours.push(hour.end)
     }
-    hoursBySite.set(row.site, hours)
+    hoursBySite.set(key, hours)
   }
   return hoursBySite
 }
 
 export function parkedDuringExceededHour(trip: Trip, hoursBySite: Map<string, number[]>) {
-  return hoursBySite.get(trip.site)?.some((end) => parkedAt(trip, end)) ?? false
+  return hoursBySite.get(`${trip.site}/${trip.vehicle}`)?.some((end) => parkedAt(trip, end)) ?? false
 }
 
 export function drillTrips(

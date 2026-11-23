@@ -81,6 +81,9 @@ import {
 } from "./data"
 import type { Card, Filters, Screen, Threshold } from "./data"
 import Operations from "./Operations"
+import SubscriptionManagement from "./SubscriptionManagement"
+import { isManagementScreen } from "./subscription-model"
+import type { ManagementScreen } from "./subscription-model"
 import ReportDashboard from "./ReportDashboard"
 import ReportPeriodFields from "./ReportPeriodFields"
 import Parking from "./Parking"
@@ -126,6 +129,9 @@ const operationIcons = {
   inventory: Warehouse,
   imports: Package,
   subscriptions: Users,
+  customers: Users,
+  vehicles: CarFront,
+  services: Settings2,
   handoffs: ArrowUpRight,
   lookup: Search,
   incidents: FileCheck2,
@@ -215,6 +221,7 @@ function App() {
   })
   const [operationDirty, setOperationDirty] = useState(false)
   const [operationFocus, setOperationFocus] = useState<string | null>(null)
+  const [managementOrigin, setManagementOrigin] = useState<string | null>(null)
   const [leaveTarget, setLeaveTarget] = useState<LeaveTarget | null>(null)
   const [screen, setScreen] = useState<Screen>(initial.screen)
   const [draft, setDraft] = useState<Filters>(initial.f)
@@ -423,6 +430,7 @@ function App() {
       return
     }
     setOperation(id)
+    setManagementOrigin(null)
     setLookupFilters(id === "lookup" ? defaultCardLookupFilters : null)
     setLookupFromReport(false)
     setParking(null)
@@ -522,6 +530,16 @@ function App() {
   function openWarehouseLookup(filters: CardLookupFilters) {
     chooseOperation("lookup")
     setLookupFilters(filters)
+  }
+  function openManagedCard(card: Card, subscriberId: string) {
+    chooseOperation("lookup")
+    setLookupFilters({ ...defaultCardLookupFilters, keyword: card.id })
+    setManagementOrigin(subscriberId)
+    setOperationFocus(card.id)
+  }
+  function navigateManagement(id: ManagementScreen, focus?: string) {
+    chooseOperation(id)
+    if (focus) setOperationFocus(focus)
   }
   function stockValues(e: typeof estates[number]) {
     return stockMetrics({ ...applied, estate: e.id })
@@ -2006,15 +2024,20 @@ function App() {
               {renderOperationMenu("Quản lý thuê bao")}
             </div>
           </div>
-          <Button
-            variant="ghost"
-            className="nav-item"
-            onClick={() => setHelp(true)}
-          >
-            <CarFront size={18} />
-            <span>Quản lý xe</span>
-            <ChevronRight size={14} />
+          <Button variant="ghost" className={`nav-item ${operation === "customers" ? "active" : ""}`}
+            aria-current={operation === "customers" ? "page" : undefined} onClick={() => chooseOperation("customers")}>
+            <Users size={18} /><span>Khách hàng</span>
           </Button>
+          <div className="nav-section" role="group" aria-label="Quản lý xe">
+            <Button variant="ghost" className="nav-item nav-section-label" aria-label="Quản lý xe" onClick={() => chooseOperation("vehicles")}>
+              <CarFront size={18} /><span>Quản lý xe</span><ChevronDown size={14} />
+            </Button><div className="subnav">{renderOperationMenu("Quản lý xe")}</div>
+          </div>
+          <div className="nav-section" role="group" aria-label="Dịch vụ">
+            <Button variant="ghost" className="nav-item nav-section-label" aria-label="Dịch vụ" onClick={() => chooseOperation("services")}>
+              <Settings2 size={18} /><span>Dịch vụ</span><ChevronDown size={14} />
+            </Button><div className="subnav">{renderOperationMenu("Dịch vụ")}</div>
+          </div>
           <div className="nav-section" role="group" aria-label="Quản lý thẻ">
             <Button
               variant="ghost"
@@ -2280,8 +2303,12 @@ function App() {
           </div>
         </header>
         <main>
+          {operation && isManagementScreen(operation) && <SubscriptionManagement screen={operation} state={cardOperations}
+            onChange={setCardOperations} onNavigate={navigateManagement} onCard={openManagedCard}
+            notify={setToast} onDirty={setOperationDirty} focusId={operationFocus} onFocused={() => setOperationFocus(null)} />}
+          {operation === "lookup" && managementOrigin && <Button className="sm-back-link" variant="ghost" onClick={() => navigateManagement("subscriptions", managementOrigin)}><ArrowLeft size={14} />Quay lại thuê bao</Button>}
           <Operations
-            screen={operation}
+            screen={operation && isManagementScreen(operation) ? null : operation}
             lookupResult={lookupResult}
             lookupFilters={lookupFilters}
             onLookupFilters={setLookupFilters}
