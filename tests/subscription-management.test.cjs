@@ -1031,7 +1031,10 @@ test("changing customer group updates every old monthly subscription without cha
   let {state,input,customerId}=setup()
   state=saveSubscriberRegistration(state,{...input,cardId:stockCard(state).id,cardParkId:'A:0'})
   const monthly=state.subscriptions[0]
-  state=saveSubscriberRegistration(state,{...input,cardId:stockCard(state,'VIP').id,cardParkId:'A:0',to:''})
+  // The VIP uses another car: one vehicle cannot hold a monthly and a VIP subscription at once.
+  const car=directoryOf(state).vehicles.find(v=>v.id===input.vehicleIds[0])
+  state=saveManagedVehicle(state,{...car,id:'',plate:'30A-999.95'})
+  state=saveSubscriberRegistration(state,{...input,vehicleIds:[directoryOf(state).vehicles[0].id],cardId:stockCard(state,'VIP').id,cardParkId:'A:0',to:''})
   const vip=state.subscriptions[0]
   state=changeSubscriberState(state,monthly.id,'Đã hủy','Kiểm tra đồng bộ hồ sơ cũ')
   const customer=directoryOf(state).customers.find(row=>row.id===customerId)
@@ -1115,4 +1118,18 @@ test("packages that read no card offer and issue no card; the owner's own face i
   assert.throws(()=>issueSubscriberCard(saved,id,stockCard(saved).id,"A:0","Cấp thêm"),/không sử dụng thẻ/)
   assert.doesNotThrow(()=>saveManagedCustomer(saved,{...directoryOf(saved).customers.find(c=>c.id===member.id),faces:[]}))
   assert.throws(()=>saveManagedCustomer(saved,{...directoryOf(saved).customers.find(c=>c.id===customerId),faces:[]}),/chủ thuê bao/)
+})
+
+test("a vehicle cannot be held by a VIP and a monthly subscription at the same time",()=>{
+  let {state,input,service}=setup()
+  state=saveManagedService(state,{...service,control:"Biển số và Thẻ"})
+  const monthly=saveSubscriberRegistration(state,{...input,cardId:stockCard(state).id,cardParkId:"A:0"})
+  const monthlyId=monthly.subscriptions[0].id
+  const vipCard=stockCard(monthly,"VIP")
+  assert.throws(()=>saveSubscriberRegistration(monthly,{...input,type:"VIP",to:"",cardId:vipCard.id,cardParkId:"A:0"}),new RegExp(`đang có thuê bao tháng ${monthlyId}`))
+  const vip=saveSubscriberRegistration(state,{...input,type:"VIP",to:"",cardId:stockCard(state,"VIP").id,cardParkId:"A:0"})
+  const vipId=vip.subscriptions[0].id
+  assert.throws(()=>saveSubscriberRegistration(vip,{...input,cardId:stockCard(vip).id,cardParkId:"A:0"}),new RegExp(`đang thuộc thuê bao VIP ${vipId}`))
+  const cancelled=changeSubscriberState(vip,vipId,"Đã hủy","Hủy VIP")
+  assert.doesNotThrow(()=>saveSubscriberRegistration(cancelled,{...input,cardId:stockCard(cancelled).id,cardParkId:"A:0"}))
 })

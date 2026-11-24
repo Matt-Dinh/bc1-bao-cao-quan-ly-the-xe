@@ -1163,6 +1163,22 @@ export function saveSubscriber(
     fail(
       "Xe đã có thuê bao tháng. Hãy bổ sung bãi xe cho thuê bao đang có thay vì đăng ký trùng.",
     )
+  // A vehicle belongs to one active subscription kind: never both a VIP and a monthly subscription.
+  const crossOwner = ids.length
+    ? directory.profiles.find(
+        (profile) =>
+          profile.id !== input.id &&
+          profile.status !== "Đã hủy" &&
+          profile.vehicleIds.some((id) => ids.includes(id)) &&
+          state.subscriptions.find((sub) => sub.id === profile.id)?.type === (input.type === "VIP" ? "Thuê bao tháng" : "VIP"),
+      )
+    : undefined
+  if (crossOwner) {
+    const plate = directory.vehicles.find((v) => crossOwner.vehicleIds.includes(v.id) && ids.includes(v.id))?.plate || ""
+    fail(input.type === "VIP"
+      ? `Xe ${plate} đang có thuê bao tháng ${crossOwner.id}. Hủy thuê bao tháng hoặc bỏ xe khỏi thuê bao đó trước khi thêm vào VIP.`
+      : `Xe ${plate} đang thuộc thuê bao VIP ${crossOwner.id}. Bỏ xe khỏi thuê bao VIP trước khi đăng ký thuê bao tháng.`)
+  }
   const vipDuplicate =
     input.type === "VIP" && ids.length
       ? directory.profiles.find(

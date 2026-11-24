@@ -30,7 +30,8 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   // 1. Stock for the demo: Proximity/Mifare cards only (UHF tags are never stocked).
   const lots: [string, string, string, string[]][] = [
     ["PN-DEMO-OTO-TB", "Thuê bao tháng", "Ô tô", ["DM-OT-01", "DM-OT-02", "DM-OT-03", "DM-OT-04"]],
-    ["PN-DEMO-OTO-VIP", "VIP", "Ô tô", ["DM-VIP-01", "DM-VIP-02"]],
+    ["PN-DEMO-OTO-VIP", "VIP", "Ô tô", ["DM-VIP-01", "DM-VIP-02", "DM-VIP-03"]],
+    ["PN-DEMO-XM-VIP", "VIP", "Xe máy", ["DM-VIP-XM-01"]],
     ["PN-DEMO-XM-TB", "Thuê bao tháng", "Xe máy", ["DM-XM-01", "DM-XM-02", "DM-XM-03", "DM-XM-04", "DM-XM-05"]],
     ["PN-DEMO-XD-TB", "Thuê bao tháng", "Xe đạp", ["DM-XD-01", "DM-XD-02"]],
   ]
@@ -120,6 +121,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     carAndMoto: customer("Đinh Công Minh", "S1.2-1212", "0935777888"),
     shopStaff: customer("Lương Thị Thu", "S1.2", "0912333444", { apartment: "", group: "Gian hàng", note: "Nhân viên gian hàng S1.2-SH03" }),
     eMoto: customer("Hồ Thị Phương", "S1.3-1103", "0988555666"),
+    vipFamily: customer("Võ Hoàng Long", "S1.5-3001", "0903111999"),
     moved: customer("Lý Văn Khánh", "S2.03-0313", "0901000012", { active: false, note: "Đã chuyển đi" }),
   }
   const v = {
@@ -139,6 +141,10 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     minhCar: vehicle("30L-135.79", "Ô tô", "Xăng/dầu", "Toyota", "Trắng"),
     minhMoto: vehicle("29H1-246.80", "Xe máy", "Xăng/dầu", "Honda", "Đen"),
     shopMoto: vehicle("29K1-357.91", "Xe máy", "Xăng/dầu", "Yamaha", "Đỏ"),
+    longCar1: vehicle("30A-888.01", "Ô tô", "Xăng/dầu", "Lexus", "Đen"),
+    longCar2: vehicle("30A-888.02", "Ô tô", "Điện", "VinFast", "Trắng"),
+    longCar3: vehicle("30A-888.03", "Ô tô", "Xăng/dầu", "Mercedes-Benz", "Bạc"),
+    longMoto: vehicle("29B2-888.04", "Xe máy", "Xăng/dầu", "Honda", "Đỏ"),
     moved: vehicle("30E-111.22", "Ô tô", "Xăng/dầu", "Hyundai", "Bạc", { active: false, note: "Xe đã bán" }),
   }
 
@@ -174,6 +180,10 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-04" })
   // Resident electric motorbike without a plate: identified by the card only.
   reg({ customerId: c.eMoto, vehicle: "Xe máy", noPlate: true, energy: "Điện", lots: [lot(PARK.s1, svc.eMotoNoPlate)], cardId: "DM-XM-05" })
+  // VIP household: one VIP card for three cars, a separate VIP card for the motorbike.
+  reg({ customerId: c.vipFamily, vehicle: "Ô tô", type: "VIP", to: "", vehicleIds: [v.longCar1, v.longCar2, v.longCar3],
+    lots: [lot(PARK.s1, svc.vipFlex), lot(PARK.s2, svc.vipFlex)], cardId: "DM-VIP-03" })
+  reg({ customerId: c.vipFamily, vehicle: "Xe máy", type: "VIP", to: "", vehicleIds: [v.longMoto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-VIP-XM-01" })
   // One customer, a car and a motorbike: two separate subscriptions.
   reg({ customerId: c.twoCars, vehicle: "Ô tô", vehicleIds: [v.car], lots: [lot(PARK.s1, "DV-TB-1")], cardId: "DM-OT-01" })
   reg({ customerId: c.twoCars, vehicle: "Xe máy", vehicleIds: [v.moto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-01" })
