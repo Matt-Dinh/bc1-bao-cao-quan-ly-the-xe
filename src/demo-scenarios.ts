@@ -63,6 +63,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     carUhfFace: service("Ô tô UHF + khuôn mặt", "Ô tô", "UHF và Khuôn mặt", { price: 1400000 }),
     bikeCardOrFace: service("Xe máy thẻ hoặc khuôn mặt", "Xe máy", "(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)", { price: 140000 }),
     bikePlate: service("Xe máy chỉ biển số", "Xe máy", "Biển số", { price: 100000 }),
+    eventPlate: service("Xe sự kiện chỉ biển số", "Ô tô", "Biển số", { pricing: "Miễn phí", price: 0, note: "Xe bus/xe khách phục vụ sự kiện, đăng ký trước biển số" }),
   }
   service("Xe đạp nhận diện khuôn mặt", "Xe đạp", "Khuôn mặt", { price: 50000 })
   service("Ô tô mở tay (sự cố đầu đọc)", "Ô tô", "Mở tay", { price: 0, pricing: "Miễn phí", active: false })
@@ -114,6 +115,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     bikeUhf: customer("Ngô Thanh Hải", "S2.01-0611", "0901000009"),
     bikeFace: customer("Đỗ Thị Hương", "S2.02-1012", "0901000010", { faces: face }),
     residentFace: customer("Mai Thanh Tùng", "S1.1-1508", "0901000013", { faces: face }),
+    eventOrganizer: customer("Công ty Sự kiện Ánh Dương", "S1.1", "0243999888", { apartment: "", group: "Nhà cung cấp dịch vụ", address: "Hà Nội", note: "Đơn vị tổ chức sự kiện" }),
     moved: customer("Lý Văn Khánh", "S2.03-0313", "0901000012", { active: false, note: "Đã chuyển đi" }),
   }
   const v = {
@@ -127,6 +129,9 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     bikeUhf: vehicle("29B1-234.56", "Xe máy", "Điện", "VinFast", "Xám"),
     bikeFace: vehicle("29C1-345.67", "Xe máy", "Xăng/dầu", "Yamaha", "Xanh"),
     residentFace: vehicle("30G-246.13", "Ô tô", "Xăng/dầu", "Kia", "Xám"),
+    bus1: vehicle("29B-123.45", "Ô tô", "Xăng/dầu", "Hyundai", "Trắng", { note: "Xe bus sự kiện, có dán tem UHF" }),
+    bus2: vehicle("29B-123.46", "Ô tô", "Xăng/dầu", "Hyundai", "Trắng", { note: "Xe bus sự kiện, có dán tem UHF" }),
+    bus3: vehicle("29B-123.47", "Ô tô", "Xăng/dầu", "Thaco", "Xanh", { note: "Xe bus sự kiện, có dán tem UHF" }),
     moved: vehicle("30E-111.22", "Ô tô", "Xăng/dầu", "Hyundai", "Bạc", { active: false, note: "Xe đã bán" }),
   }
 
@@ -151,6 +156,9 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   reg({ customerId: c.staff, vehicle: "Ô tô", vehicleIds: [v.staff], group: "CBNV BQL", lots: [lot(PARK.s1, svc.staffFace)] })
   // Resident: plate + owner's face, the package uses no card.
   reg({ customerId: c.residentFace, vehicle: "Ô tô", vehicleIds: [v.residentFace], lots: [lot(PARK.s1, svc.residentFace), lot(PARK.s2, svc.residentFace)] })
+  // Event buses: plate only, one short subscription per bus, no card.
+  for (const bus of [v.bus1, v.bus2, v.bus3])
+    reg({ customerId: c.eventOrganizer, vehicle: "Ô tô", vehicleIds: [bus], from: "2026-11-05", to: "2026-11-06", note: "Dữ liệu mẫu", lots: [lot(PARK.out, svc.eventPlate)] })
   // One customer, a car and a motorbike: two separate subscriptions.
   reg({ customerId: c.twoCars, vehicle: "Ô tô", vehicleIds: [v.car], lots: [lot(PARK.s1, "DV-TB-1")], cardId: "DM-OT-01" })
   reg({ customerId: c.twoCars, vehicle: "Xe máy", vehicleIds: [v.moto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-01" })
