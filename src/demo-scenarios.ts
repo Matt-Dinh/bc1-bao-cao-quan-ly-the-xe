@@ -31,7 +31,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   const lots: [string, string, string, string[]][] = [
     ["PN-DEMO-OTO-TB", "Thuê bao tháng", "Ô tô", ["DM-OT-01", "DM-OT-02", "DM-OT-03", "DM-OT-04"]],
     ["PN-DEMO-OTO-VIP", "VIP", "Ô tô", ["DM-VIP-01", "DM-VIP-02"]],
-    ["PN-DEMO-XM-TB", "Thuê bao tháng", "Xe máy", ["DM-XM-01", "DM-XM-02", "DM-XM-03", "DM-XM-04"]],
+    ["PN-DEMO-XM-TB", "Thuê bao tháng", "Xe máy", ["DM-XM-01", "DM-XM-02", "DM-XM-03", "DM-XM-04", "DM-XM-05"]],
     ["PN-DEMO-XD-TB", "Thuê bao tháng", "Xe đạp", ["DM-XD-01", "DM-XD-02"]],
   ]
   let code = 0
@@ -52,6 +52,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   const svc = {
     vipFlex: service("Ô tô VIP linh hoạt", "Ô tô", "Biển số hoặc Thẻ", { price: 3000000 }),
     eBike: service("Xe đạp điện không biển", "Xe đạp", "Biển số hoặc Thẻ", { energy: "Điện", price: 80000 }),
+    eMotoNoPlate: service("Xe máy điện không biển", "Xe máy", "Biển số hoặc Thẻ", { energy: "Điện", price: 100000 }),
     staffFace: service("Ô tô CBNV khuôn mặt", "Ô tô", "Biển số và Khuôn mặt", { price: 0, pricing: "Miễn phí" }),
     residentFace: service("Ô tô cư dân khuôn mặt", "Ô tô", "Biển số và Khuôn mặt", { price: 1200000 }),
     uhfPlate: service("Ô tô UHF dán xe", "Ô tô", "Biển số và Thẻ UHF", { price: 1300000 }),
@@ -118,6 +119,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     eventOrganizer: customer("Công ty Sự kiện Ánh Dương", "S1.1", "0243999888", { apartment: "", group: "Nhà cung cấp dịch vụ", address: "Hà Nội", note: "Đơn vị tổ chức sự kiện" }),
     carAndMoto: customer("Đinh Công Minh", "S1.2-1212", "0935777888"),
     shopStaff: customer("Lương Thị Thu", "S1.2", "0912333444", { apartment: "", group: "Gian hàng", note: "Nhân viên gian hàng S1.2-SH03" }),
+    eMoto: customer("Hồ Thị Phương", "S1.3-1103", "0988555666"),
     moved: customer("Lý Văn Khánh", "S2.03-0313", "0901000012", { active: false, note: "Đã chuyển đi" }),
   }
   const v = {
@@ -170,6 +172,8 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   // Shop employee: motorbike with card + plate, the shop contract is required.
   reg({ customerId: c.shopStaff, vehicle: "Xe máy", vehicleIds: [v.shopMoto], group: "Gian hàng", contract: "HĐ-GH-S1.2-03", contractEnd: "2027-06-30",
     lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-04" })
+  // Resident electric motorbike without a plate: identified by the card only.
+  reg({ customerId: c.eMoto, vehicle: "Xe máy", noPlate: true, energy: "Điện", lots: [lot(PARK.s1, svc.eMotoNoPlate)], cardId: "DM-XM-05" })
   // One customer, a car and a motorbike: two separate subscriptions.
   reg({ customerId: c.twoCars, vehicle: "Ô tô", vehicleIds: [v.car], lots: [lot(PARK.s1, "DV-TB-1")], cardId: "DM-OT-01" })
   reg({ customerId: c.twoCars, vehicle: "Xe máy", vehicleIds: [v.moto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-01" })

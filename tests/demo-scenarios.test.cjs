@@ -22,6 +22,8 @@ test("demo scenarios pass every registration rule and cover each case on the lis
   assert.deepEqual(minh.map((p) => [p.vehicle, !!sub(p.id).cardId]).sort(), [["Xe máy", true], ["Ô tô", false]], "case 12")
   const shop = demo.find((p) => name(p) === "Lương Thị Thu")
   assert.ok(shop && sub(shop.id).group === "Gian hàng" && sub(shop.id).contract === "HĐ-GH-S1.2-03" && sub(shop.id).cardId === "DM-XM-04", "shop employee")
+  const eMoto = demo.find((p) => name(p) === "Hồ Thị Phương")
+  assert.ok(eMoto && sub(eMoto.id).cardId === "DM-XM-05" && eMoto.noPlate && eMoto.energy === "Điện" && !eMoto.vehicleIds.length, "electric motorbike without plate")
   assert.equal(buses.length, 3, "event buses: one plate-only subscription each")
   assert.ok(buses.every((p) => p.vehicleIds.length === 1 && !sub(p.id).cardId && sub(p.id).effectiveFrom === "2026-11-05"))
   const owners = demo.map((p) => p.customerId)
