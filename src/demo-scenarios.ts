@@ -51,33 +51,33 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     return directoryOf(state).services[0].id
   }
   const svc = {
-    vipFlex: service("Ô tô VIP linh hoạt", "Ô tô", "Biển số hoặc Thẻ", { price: 3000000 }),
-    eBike: service("Xe đạp điện không biển", "Xe đạp", "Biển số hoặc Thẻ", { energy: "Điện", price: 80000 }),
-    eMotoNoPlate: service("Xe máy điện không biển", "Xe máy", "Biển số hoặc Thẻ", { energy: "Điện", price: 100000 }),
-    staffFace: service("Ô tô CBNV khuôn mặt", "Ô tô", "Biển số và Khuôn mặt", { price: 0, pricing: "Miễn phí" }),
-    staffBikeFace: service("Xe máy CBNV khuôn mặt", "Xe máy", "Biển số và Khuôn mặt", { price: 0, pricing: "Miễn phí", note: "CBNV/bảo vệ đi xe máy, nhận diện bằng biển số và khuôn mặt" }),
-    residentFace: service("Ô tô cư dân khuôn mặt", "Ô tô", "Biển số và Khuôn mặt", { price: 1200000 }),
-    uhfPlate: service("Ô tô UHF dán xe", "Ô tô", "Biển số và Thẻ UHF", { price: 1300000 }),
-    uhfOnly: service("Ô tô UHF tự động", "Ô tô", "UHF", { price: 1000000 }),
-    bikeUhf: service("Xe máy UHF hoặc biển số", "Xe máy", "UHF hoặc Biển số", { price: 150000 }),
-    bikeFace: service("Xe máy thẻ + khuôn mặt", "Xe máy", "Biển số và Thẻ và Khuôn mặt", { price: 130000 }),
-    carFaceOrUhf: service("Ô tô khuôn mặt hoặc UHF", "Ô tô", "(Biển số và Khuôn mặt) hoặc (Biển số và UHF)", { price: 1250000 }),
-    carUhfOrFace: service("Ô tô UHF hoặc biển số + khuôn mặt", "Ô tô", "UHF hoặc (Biển số và Khuôn mặt)", { price: 1100000 }),
-    carUhfFace: service("Ô tô UHF + khuôn mặt", "Ô tô", "UHF và Khuôn mặt", { price: 1400000 }),
-    bikeCardOrFace: service("Xe máy thẻ hoặc khuôn mặt", "Xe máy", "(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)", { price: 140000 }),
-    bikePlate: service("Xe máy chỉ biển số", "Xe máy", "Biển số", { price: 100000 }),
-    eventUhf: service("Xe sự kiện UHF + biển số", "Ô tô", "Biển số và Thẻ UHF", { pricing: "Miễn phí", price: 0, note: "Quét tem UHF, đối chiếu biển số gắn với tem với biển số đã đăng ký" }),
-    eventRfid: service("Xe sự kiện chỉ RFID", "Ô tô", "UHF", { pricing: "Miễn phí", price: 0, note: "Xe sự kiện dán tem RFID, đăng ký trước; đầu đọc UHF quét đúng mã là cho qua" }),
-    eventPlate: service("Xe sự kiện chỉ biển số", "Ô tô", "Biển số", { pricing: "Miễn phí", price: 0, note: "Xe bus/xe khách phục vụ sự kiện, đăng ký trước biển số" }),
+    vipFlex: service("Ô tô VIP – biển số hoặc thẻ", "Ô tô", "Biển số hoặc Thẻ", { price: 3000000 }),
+    eBike: service("Xe đạp điện không biển – thẻ", "Xe đạp", "Thẻ", { energy: "Điện", price: 80000 }),
+    eMotoNoPlate: service("Xe máy điện không biển – thẻ", "Xe máy", "Thẻ", { energy: "Điện", price: 100000 }),
+    staffFace: service("Ô tô CBNV – khuôn mặt + biển số", "Ô tô", "Biển số và Khuôn mặt", { price: 0, pricing: "Miễn phí" }),
+    staffBikeFace: service("Xe máy CBNV – khuôn mặt + biển số", "Xe máy", "Biển số và Khuôn mặt", { price: 0, pricing: "Miễn phí", note: "CBNV/bảo vệ đi xe máy, nhận diện bằng biển số và khuôn mặt" }),
+    residentFace: service("Ô tô cư dân – khuôn mặt + biển số", "Ô tô", "Biển số và Khuôn mặt", { price: 1200000 }),
+    uhfPlate: service("Ô tô – RFID + biển số", "Ô tô", "Biển số và Thẻ UHF", { price: 1300000 }),
+    uhfOnly: service("Ô tô – chỉ RFID", "Ô tô", "UHF", { price: 1000000 }),
+    bikeUhf: service("Xe máy – RFID hoặc biển số", "Xe máy", "UHF hoặc Biển số", { price: 150000 }),
+    bikeFace: service("Xe máy – thẻ + khuôn mặt + biển số", "Xe máy", "Biển số và Thẻ và Khuôn mặt", { price: 130000 }),
+    carFaceOrUhf: service("Ô tô – biển số + (khuôn mặt hoặc RFID)", "Ô tô", "(Biển số và Khuôn mặt) hoặc (Biển số và UHF)", { price: 1250000 }),
+    carUhfOrFace: service("Ô tô – RFID, hoặc khuôn mặt + biển số", "Ô tô", "UHF hoặc (Biển số và Khuôn mặt)", { price: 1100000 }),
+    carUhfFace: service("Ô tô – RFID + khuôn mặt", "Ô tô", "UHF và Khuôn mặt", { price: 1400000 }),
+    bikeCardOrFace: service("Xe máy – biển số + (thẻ hoặc khuôn mặt)", "Xe máy", "(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)", { price: 140000 }),
+    bikePlate: service("Xe máy – chỉ biển số", "Xe máy", "Biển số", { price: 100000 }),
+    eventUhf: service("Ô tô sự kiện – RFID + biển số", "Ô tô", "Biển số và Thẻ UHF", { pricing: "Miễn phí", price: 0, note: "Quét tem UHF, đối chiếu biển số gắn với tem với biển số đã đăng ký" }),
+    eventRfid: service("Ô tô sự kiện – chỉ RFID", "Ô tô", "UHF", { pricing: "Miễn phí", price: 0, note: "Xe sự kiện dán tem RFID, đăng ký trước; đầu đọc UHF quét đúng mã là cho qua" }),
+    eventPlate: service("Ô tô sự kiện – chỉ biển số", "Ô tô", "Biển số", { pricing: "Miễn phí", price: 0, note: "Xe bus/xe khách phục vụ sự kiện, đăng ký trước biển số" }),
   }
-  service("Xe đạp nhận diện khuôn mặt", "Xe đạp", "Khuôn mặt", { price: 50000 })
+  service("Xe đạp – chỉ khuôn mặt", "Xe đạp", "Khuôn mặt", { price: 50000 })
   service("Ô tô mở tay (sự cố đầu đọc)", "Ô tô", "Mở tay", { price: 0, pricing: "Miễn phí", active: false })
   service("Vãng lai QR + khuôn mặt", "Ô tô", "QRCODE và Khuôn mặt", { category: "Vãng lai", pricing: "Theo lượt", price: 30000 })
   service("Vãng lai xe máy biển số", "Xe máy", "Biển số", { category: "Vãng lai", pricing: "Theo lượt", price: 5000 })
   service("Xe đạp miễn kiểm soát", "Xe đạp", "Không", { category: "Vãng lai", pricing: "Miễn phí", price: 0 })
 
   // Keep the stopped-service example, plus an active manual-control package.
-  service("Ô tô mở tay", "Ô tô", "Mở tay", { price: 0, pricing: "Miễn phí" })
+  service("Ô tô – bảo vệ mở tay", "Ô tô", "Mở tay", { price: 0, pricing: "Miễn phí" })
   // Specific normal/electric packages let every lot demonstrate separate vehicle pricing.
   for (const vehicle of ["Ô tô", "Xe máy", "Xe đạp"]) {
     for (const energy of energyOptions(vehicle)) {
@@ -87,7 +87,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
         : vehicle === "Xe máy" ? (electric ? 100000 : 120000) : (electric ? 80000 : 60000)
       const visitorPrice = vehicle === "Ô tô" ? (electric ? 20000 : 30000)
         : vehicle === "Xe máy" ? (electric ? 4000 : 5000) : (electric ? 3000 : 2000)
-      service(`Gói thuê bao ${label}`, vehicle, vehicle === "Xe đạp" ? "Biển số hoặc Thẻ" : "Biển số và Thẻ",
+      service(`${vehicleVariantLabel(vehicle, energy).replace(/ \((.*)\)$/, " $1")} – ${vehicle === "Xe đạp" ? "biển số hoặc thẻ" : "thẻ + biển số"}`, vehicle, vehicle === "Xe đạp" ? "Biển số hoặc Thẻ" : "Biển số và Thẻ",
         { energy, price: monthlyPrice })
       service(`Vãng lai ${label}`, vehicle, "Biển số hoặc Thẻ",
         { energy, category: "Vãng lai", pricing: "Theo lượt", price: visitorPrice })
@@ -123,7 +123,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     eventOrganizer: customer("Công ty Sự kiện Ánh Dương", "S1.1", "0243999888", { apartment: "", group: "Nhà cung cấp dịch vụ", address: "Hà Nội", note: "Đơn vị tổ chức sự kiện" }),
     carAndMoto: customer("Đinh Công Minh", "S1.2-1212", "0935777888"),
     guard: customer("Trần Văn Bảo", "S1.01", "0901000099", { apartment: "", faces: face, group: "CBNV BQL", note: "Nhân viên bảo vệ tòa S1.01" }),
-    shopStaff: customer("Lương Thị Thu", "S1.2", "0912333444", { apartment: "", group: "Gian hàng", note: "Nhân viên gian hàng S1.2-SH03" }),
+    shopStaff: customer("Lương Thị Thu", "S1.2", "0912333444", { apartment: "", group: "Gian hàng", contract: "HĐ-GH-S1.2-03", contractEnd: "2027-06-30", note: "Nhân viên gian hàng S1.2-SH03" }),
     eMoto: customer("Hồ Thị Phương", "S1.3-1103", "0988555666"),
     vipFamily: customer("Võ Hoàng Long", "S1.5-3001", "0903111999"),
     moved: customer("Lý Văn Khánh", "S2.03-0313", "0901000012", { active: false, note: "Đã chuyển đi" }),
@@ -184,7 +184,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   // Shop employee: motorbike with card + plate, the shop contract is required.
   // Security guard on a motorbike: plate + owner face, no card.
   reg({ customerId: c.guard, vehicle: "Xe máy", vehicleIds: [v.guardMoto], group: "CBNV BQL", lots: [lot(PARK.s1, svc.staffBikeFace)] })
-  reg({ customerId: c.shopStaff, vehicle: "Xe máy", vehicleIds: [v.shopMoto], group: "Gian hàng", contract: "HĐ-GH-S1.2-03", contractEnd: "2027-06-30",
+  reg({ customerId: c.shopStaff, vehicle: "Xe máy", vehicleIds: [v.shopMoto], group: "Gian hàng",
     lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-04" })
   // Resident electric motorbike without a plate: identified by the card only.
   reg({ customerId: c.eMoto, vehicle: "Xe máy", noPlate: true, energy: "Điện", lots: [lot(PARK.s1, svc.eMotoNoPlate)], cardId: "DM-XM-05" })

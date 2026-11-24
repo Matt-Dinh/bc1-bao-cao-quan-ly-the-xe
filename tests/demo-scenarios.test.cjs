@@ -22,7 +22,7 @@ test("demo scenarios pass every registration rule and cover each case on the lis
   const minh = demo.filter((p) => name(p) === "Đinh Công Minh")
   assert.deepEqual(minh.map((p) => [p.vehicle, !!sub(p.id).cardId]).sort(), [["Xe máy", true], ["Ô tô", false]], "case 12")
   const shop = demo.find((p) => name(p) === "Lương Thị Thu")
-  assert.ok(shop && sub(shop.id).group === "Gian hàng" && sub(shop.id).contract === "HĐ-GH-S1.2-03" && sub(shop.id).cardId === "DM-XM-04", "shop employee")
+  assert.ok(shop && sub(shop.id).group === "Gian hàng" && sub(shop.id).contract === "HĐ-GH-S1.2-03" && d.customers.find((c) => c.id === shop.customerId).contractEnd === "2027-06-30" && sub(shop.id).cardId === "DM-XM-04", "shop employee")
   const eMoto = demo.find((p) => name(p) === "Hồ Thị Phương")
   assert.ok(eMoto && sub(eMoto.id).cardId === "DM-XM-05" && eMoto.noPlate && eMoto.energy === "Điện" && !eMoto.vehicleIds.length, "electric motorbike without plate")
   const guard = demo.find((p) => name(p) === "Trần Văn Bảo")

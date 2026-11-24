@@ -43,6 +43,8 @@ const {
   controlRequiresUhf,
   profileUsesCard,
   profileRfidVehicle,
+  controlDescription,
+  controlMethods,
 } = require("/tmp/vparking-model-tests/subscription-model.js")
 test("cross-screen links preserve complete service and entity identifiers containing colons", () => {
   assert.deepEqual(parseManagementRelation("service:DV-A:0-0"), { kind: "service", id: "DV-A:0-0" })
@@ -513,7 +515,7 @@ test("service packages can be shared by several explicitly selected parking lots
   const service = next.directory.services[0]
   assert.deepEqual(service.parkIds, ["A:0", "A:1"])
   assert.equal(service.control, "Biển số")
-  assert.throws(() => saveManagedService(next, { ...service, id: "", control: "Thẻ" }), /Cấu hình dịch vụ/)
+  assert.throws(() => saveManagedService(next, { ...service, id: "", control: "Thẻ RFID" }), /Cấu hình dịch vụ/)
   const saved = saveSubscriber(next, {
     ...input,
     lots: [
@@ -1030,14 +1032,21 @@ test("customer classification is authoritative for registration, including stale
   const sub=state.subscriptions[0],card=assignedCard(state,sub.id),before=stockMetrics(defaults)
   assert.equal(sub.group,'Cư dân');assert.equal(card.group,'Cư dân')
   customer=directoryOf(state).customers.find(row=>row.id===customerId)
-  const changed=saveManagedCustomer(state,{...customer,group:'Gian hàng'})
-  assert.equal(changed.subscriptions.find(row=>row.id===sub.id).group,'Gian hàng')
+  // The shop contract is entered on the customer, not on the subscription.
+  assert.throws(()=>saveManagedCustomer(state,{...customer,group:'Gian hàng'}),/Số hợp đồng/)
+  assert.throws(()=>saveManagedCustomer(state,{...customer,group:'Gian hàng',contract:'HD-KH-01',contractEnd:'2020-01-01'}),/quá khứ/)
+  const changed=saveManagedCustomer(state,{...customer,group:'Gian hàng',contract:' HD-KH-01 ',contractEnd:'2026-12-31'})
+  assert.equal(directoryOf(changed).customers.find(row=>row.id===customerId).contract,'HD-KH-01')
+  const changedSub=changed.subscriptions.find(row=>row.id===sub.id)
+  assert.equal(changedSub.group,'Gian hàng');assert.equal(changedSub.contract,'HD-KH-01');assert.equal(changedSub.contractEnd,'2026-12-31')
   assert.equal(changed.cards.find(row=>row.id===card.id).group,'Gian hàng')
-  assert.deepEqual(subscriptionGroupWarnings(changed,sub.id),['Thiếu hợp đồng hợp lệ'])
-  const edit=subscriberInput(changed,sub.id)
-  assert.throws(()=>saveSubscriberRegistration(changed,{...edit,group:'Cư dân'}),/hợp đồng/)
-  const completed=saveSubscriberRegistration(changed,{...edit,contract:'HD-KH-01',contractEnd:'2026-12-31'})
-  assert.deepEqual(subscriptionGroupWarnings(completed,sub.id),[])
+  assert.deepEqual(subscriptionGroupWarnings(changed,sub.id),[])
+  // A forged contract in the draft is ignored; the customer's contract wins.
+  const completed=saveSubscriberRegistration(changed,{...subscriberInput(changed,sub.id),contract:'HD-GIA',contractEnd:'2030-01-01'})
+  assert.equal(completed.subscriptions.find(row=>row.id===sub.id).contract,'HD-KH-01')
+  // Changing the contract on the customer updates the subscription.
+  const renewed=saveManagedCustomer(completed,{...directoryOf(completed).customers.find(row=>row.id===customerId),contract:'HD-KH-02',contractEnd:'2027-12-31'})
+  assert.equal(renewed.subscriptions.find(row=>row.id===sub.id).contract,'HD-KH-02')
   assert.deepEqual(stockMetrics(defaults),before)
 })
 
@@ -1084,23 +1093,26 @@ test("switching customers replaces draft group, clears old contracts and validat
   const customer=directoryOf(state).customers.find(row=>row.id===customerId)
   assert.throws(()=>saveManagedCustomer(state,{...customer,group:'VIP'}),/nhóm thuê bao/)
   assert.throws(()=>saveManagedCustomer(state,{...customer,group:'Cư dân',apartment:''}),/căn hộ/)
-  state=saveManagedCustomer(state,{...customer,id:'',name:'Khách gian hàng',phone:'0987654321',apartment:'S1.1-9999',group:'Gian hàng'})
+  state=saveManagedCustomer(state,{...customer,id:'',name:'Khách gian hàng',phone:'0987654321',apartment:'S1.1-9999',group:'Gian hàng',contract:'HD-GH-9',contractEnd:'2027-01-31'})
   const other=directoryOf(state).customers[0]
   const draft=updateRegistrationDraft(state,{...input,contract:'HD-CU',contractEnd:'2026-12-31'},{customerId:other.id,group:'Nội bộ'})
-  assert.equal(draft.group,'Gian hàng');assert.equal(draft.contract,'');assert.equal(draft.contractEnd,'')
+  assert.equal(draft.group,'Gian hàng');assert.equal(draft.contract,'HD-GH-9');assert.equal(draft.contractEnd,'2027-01-31')
+  const back=updateRegistrationDraft(state,draft,{customerId})
+  assert.equal(back.contract,'');assert.equal(back.contractEnd,'')
   assert.equal(directoryOf(state).customers.find(row=>row.id===customerId).group,customer.group)
 })
 
 test("leaving the Gian hàng group clears the old contract from the customer's subscriptions",()=>{
   let {state,input,customerId}=setup()
   const owner=directoryOf(state).customers.find(c=>c.id===customerId)
-  state=saveManagedCustomer(state,{...owner,group:"Gian hàng"})
+  state=saveManagedCustomer(state,{...owner,group:"Gian hàng",contract:"HĐ-GH-01",contractEnd:"2027-06-30"})
   state=saveManagedService(state,{...directoryOf(state).services.find(s=>s.id===input.lots[0].serviceId),control:"Biển số"})
-  state=saveSubscriberRegistration(state,{...input,contract:"HĐ-GH-01",contractEnd:"2027-06-30"})
+  state=saveSubscriberRegistration(state,input)
   const id=state.subscriptions[0].id
   assert.equal(state.subscriptions[0].contract,"HĐ-GH-01")
   const moved=saveManagedCustomer(state,{...directoryOf(state).customers.find(c=>c.id===customerId),group:"Văn phòng"})
   const sub=moved.subscriptions.find(s=>s.id===id)
+  assert.equal(directoryOf(moved).customers.find(c=>c.id===customerId).contract,undefined)
   assert.equal(sub.group,"Văn phòng")
   assert.equal(sub.contract,"")
   assert.equal(sub.contractEnd,"")
@@ -1146,4 +1158,17 @@ test("a vehicle cannot be held by a VIP and a monthly subscription at the same t
   assert.throws(()=>saveSubscriberRegistration(vip,{...input,cardId:stockCard(vip).id,cardParkId:"A:0"}),new RegExp(`đang thuộc thuê bao VIP ${vipId}`))
   const cancelled=changeSubscriberState(vip,vipId,"Đã hủy","Hủy VIP")
   assert.doesNotThrow(()=>saveSubscriberRegistration(cancelled,{...input,cardId:stockCard(cancelled).id,cardParkId:"A:0"}))
+})
+
+test("service picker labels describe each control mode in plain language and filter by method",()=>{
+  assert.equal(controlDescription("Biển số và Thẻ"),"Quẹt thẻ + khớp biển số")
+  assert.equal(controlDescription("Biển số"),"Chỉ khớp biển số")
+  assert.equal(controlDescription("Biển số hoặc Thẻ"),"Khớp biển số, hoặc quẹt thẻ")
+  assert.equal(controlDescription("UHF"),"Quét RFID (UHF)")
+  assert.equal(controlDescription("Biển số hoặc Thẻ",true),"Quẹt thẻ")
+  assert.equal(controlDescription("UHF hoặc (Biển số và Khuôn mặt)",true),"Quét RFID (UHF)")
+  assert.equal(controlDescription("(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)"),"Quẹt thẻ + khớp biển số, hoặc nhận diện khuôn mặt + khớp biển số")
+  assert.deepEqual(controlMethods("Biển số và Thẻ UHF"),["Biển số","RFID"])
+  assert.deepEqual(controlMethods("(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)"),["Thẻ","Biển số","Khuôn mặt"])
+  assert.deepEqual(controlMethods("Mở tay"),["Mở tay"])
 })

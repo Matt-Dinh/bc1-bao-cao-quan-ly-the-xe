@@ -153,6 +153,8 @@ const emptyCustomer = (estate = ""): ManagedCustomer => ({
   estate,
   name: "",
   group: "Chưa phân nhóm",
+  contract: "",
+  contractEnd: "",
   unitId: "",
   block: "",
   phone: "",
@@ -1142,6 +1144,7 @@ export default function SubscriptionManagement({
                   ],
                   ["Số điện thoại", selectedCustomer.phone],
                   ["Nhóm thuê bao", customerSubscriptionGroup(selectedCustomer)],
+                  ...(selectedCustomer.group === "Gian hàng" ? [["Hợp đồng", selectedCustomer.contract ? `${selectedCustomer.contract} · đến ${date(selectedCustomer.contractEnd || "")}` : "Chưa có hợp đồng"]] : []),
                   ["Email", selectedCustomer.email],
                   ["CCCD", selectedCustomer.identity],
                   [
@@ -1321,6 +1324,16 @@ export default function SubscriptionManagement({
                     <Select aria-label="Nhóm thuê bao khách hàng" value={editor.value.group ?? customerSubscriptionGroup(editor.value)}
                       onChange={event=>change({group:event.target.value})} options={customerGroups}/>
                   </Field>
+                  {(editor.value.group ?? customerSubscriptionGroup(editor.value)) === "Gian hàng" && <>
+                    <Field label="Số hợp đồng" required hint="Hợp đồng gian hàng dùng chung cho các thuê bao tháng của khách hàng.">
+                      <Input aria-label="Số hợp đồng khách hàng" maxLength={255} value={editor.value.contract ?? ""}
+                        onChange={event=>change({contract:event.target.value})}/>
+                    </Field>
+                    <Field label="Hợp đồng đến" required>
+                      <Input type="date" aria-label="Hợp đồng khách hàng đến" min={today} value={editor.value.contractEnd ?? ""}
+                        onChange={event=>change({contractEnd:event.target.value})}/>
+                    </Field>
+                  </>}
                   <Field label="Tên khách hàng" required>
                     <Input
                       aria-label="Tên khách hàng"

@@ -162,3 +162,22 @@
 .sr-uhf { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 0 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed var(--color-border, #e5e7eb); }
 .sr-uhf .sm-warning { grid-column: 1 / -1; }
 @media (max-width: 640px) { .sr-uhf { grid-template-columns: 1fr; } }
+/* Service picker: vehicle buttons, method chips, readable package rows. */
+.sr-svc-filters { display: flex; flex-direction: column; gap: 10px; }
+.sr-svc-vehicles, .sr-svc-methods { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sr-svc-vehicles button, .sr-svc-methods button { border: 1px solid var(--color-border); background: #fff; border-radius: 6px; padding: 6px 12px; font-size: 11px; color: #35445a; cursor: pointer; }
+.sr-svc-vehicles button span { color: var(--color-muted); }
+.sr-svc-vehicles button.active, .sr-svc-methods button.active { border-color: #ed9aad; background: #fff7f8; color: var(--color-brand); font-weight: 600; }
+.sr-svc-vehicles button:disabled { opacity: .45; cursor: not-allowed; }
+.sr-svc-methods > span { font-size: 10px; color: var(--color-muted); margin-right: 2px; }
+.sr-svc-methods button { padding: 4px 10px; border-radius: 999px; font-size: 10px; }
+.sr-svc-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sr-svc-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 2px; }
+.sr-svc-option { display: flex; align-items: flex-start; gap: 9px; padding: 9px 11px; border: 1px solid var(--color-border); border-radius: 7px; cursor: pointer; }
+.sr-svc-option.selected { border-color: #ed9aad; background: #fff7f8; }
+.sr-svc-option input { accent-color: var(--color-brand); flex-shrink: 0; margin-top: 2px; }
+.sr-svc-option > span, .sr-svc-chosen > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sr-svc-option strong, .sr-svc-chosen strong { font-size: 11px; color: #35445a; }
+.sr-svc-option span span, .sr-svc-chosen span { font-size: 11px; color: #53647a; }
+.sr-svc-option small, .sr-svc-chosen small { font-size: 10px; color: var(--color-muted); line-height: 1.5; }
+.sr-svc-chosen { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid #ed9aad; background: #fff7f8; border-radius: 7px; }

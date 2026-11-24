@@ -3,19 +3,54 @@ import type { ReactNode } from "react"
 import { CreditCard, Plus, X } from "lucide-react"
 import { Button, Field, Input, Select, Textarea } from "./ui"
 import { EntityPicker, RelationChoices } from "./ManagementPickers"
-import { estates, today } from "./data"
+import { estates, normalize, today } from "./data"
 import type { Card } from "./data"
 import type { OperationState } from "./operations-model"
 import {
   assignedCard, controlRequiresPlate, customerSubscriptionGroup, directoryOf, managementParks, registrationInput, registrationForCard,
   subscriberRequiresCard, subscriptionCardFits,
-  profileHasFace,profileRequiresFace,profileUsesCard,profileRequiresUhf,profileUsesUhf,profileRfidVehicle,
+  profileHasFace,profileRequiresFace,profileUsesCard,profileRequiresUhf,profileUsesUhf,profileRfidVehicle,controlMethodKeys,controlMethods,controlDescription,controlRequiresCard,controlRequiresUhf,
 } from "./subscription-model"
-import type { ManagedService, SubscriberInput } from "./subscription-model"
+import type { ControlMethod, ManagedService, SubscriberInput, SubscriptionDirectory } from "./subscription-model"
 import { vehicleVariantLabel, vehicleVariantOptions } from "./vehicle-energy"
 
 function Section({number,title,hint,children}:{number:number;title:string;hint?:string;children:ReactNode}) {
   return <section className="sr-section"><div className="sr-section-heading"><span>{number}</span><div><h3>{title}</h3>{hint&&<p>{hint}</p>}</div></div>{children}</section>
+}
+const servicePrice=(s:ManagedService)=>s.pricing==="Miễn phí"||!s.price?"Miễn phí":`${s.price.toLocaleString("vi-VN")}đ/${s.pricing==="Theo tháng"?"tháng":s.pricing==="Theo lượt"?"lượt":"giờ"}`
+function serviceNeeds(s:ManagedService,plateFree=false) {
+  // Without a plate only the plate-free branches apply, so a "Biển số hoặc Thẻ" package then needs the card.
+  const all=s.control.split(" hoặc "),usable=plateFree?all.filter(b=>!b.includes("Biển số")):all,mode=(usable.length?usable:all).join(" hoặc ")
+  const needs:string[]=[]
+  if(controlRequiresCard(mode))needs.push("cần thẻ Proximity/Mifare")
+  if(controlRequiresUhf(mode))needs.push("cần xe có mã RFID")
+  if(mode.split(" hoặc ").every(b=>b.includes("Khuôn mặt")))needs.push("cần ảnh khuôn mặt chủ thuê bao")
+  if(!plateFree&&!controlRequiresPlate(s.control))needs.push("không bắt buộc biển số")
+  return needs
+}
+/** Service list as readable rows: plain-language control, vehicle, price and what the package needs. */
+function ServicePicker({label,hint,value,options,total,disabled,plateFree,directory,onChange}:{label:string;hint?:string;value:string;options:ManagedService[];total:number;disabled?:boolean;plateFree?:boolean
+  directory:SubscriptionDirectory;onChange:(id:string)=>void}) {
+  const [open,setOpen]=useState(!value)
+  const chosen=directory.services.find(s=>s.id===value)
+  const sorted=[...options].sort((a,b)=>a.name.localeCompare(b.name,"vi"))
+  const rows=chosen?[...sorted.filter(s=>s.id===value),...sorted.filter(s=>s.id!==value)]:sorted
+  const meta=(s:ManagedService)=>[s.energy?vehicleVariantLabel(s.vehicle,s.energy):s.vehicle,servicePrice(s),...serviceNeeds(s,plateFree)].join(" · ")
+  return <div className="sr-svc-picker field">
+    <span className="field-label">{label} <span className="required">*</span></span>
+    {chosen&&!open?<div className="sr-svc-chosen"><div><strong>{chosen.name}{!chosen.active?" · Đã ngừng":""}</strong><span>{controlDescription(chosen.control,plateFree)}</span><small>{meta(chosen)}</small></div>
+      <Button disabled={disabled} onClick={()=>setOpen(true)}>Đổi dịch vụ</Button></div>:<>
+      <div className="sr-svc-list" role="radiogroup" aria-label={label}>
+        {rows.map(s=><label key={s.id} className={`sr-svc-option ${s.id===value?"selected":""}`}>
+          <input type="radio" name={`svc-${label}`} disabled={disabled} checked={s.id===value} onChange={()=>{onChange(s.id);setOpen(false)}}/>
+          <span><strong>{s.name}{!s.active?" · Đã ngừng":""}</strong><span>{controlDescription(s.control,plateFree)}</span><small>{meta(s)}</small></span>
+        </label>)}
+        {!rows.length&&<p className="sr-hint">{disabled?"Chọn bãi xe trước.":"Không có gói phù hợp với bộ lọc. Đổi loại xe hoặc bỏ bớt lọc."}</p>}
+      </div>
+      <small className="sr-hint">Hiển thị {rows.length}/{total} gói.{chosen&&<> <Button variant="link" onClick={()=>setOpen(false)}>Giữ {chosen.name}</Button></>}</small>
+    </>}
+    {hint&&<span className="field-hint">{hint}</span>}
+  </div>
 }
 export default function SubscriberRegistration({value:raw,state,onChange,onCreateCustomer,onEditCustomer,onCreateVehicle,onEditVehicle,onCard}:{
   value:SubscriberInput;state:OperationState;onChange:(patch:Partial<SubscriberInput>)=>void
@@ -46,6 +81,9 @@ export default function SubscriberRegistration({value:raw,state,onChange,onCreat
   // UHF gates read the RFID tag declared on the vehicle record.
   const rfidVehicle=profileRfidVehicle(directory,value),pickedVehicle=directory.vehicles.find(v=>v.id===value.vehicleIds[0])
   const commonServiceId=value.lots.length&&value.lots.every(l=>l.serviceId===value.lots[0].serviceId)?value.lots[0].serviceId:""
+  const [vehicleTab,setVehicleTab]=useState(()=>value.vehicle||"Ô tô")
+  const [methods,setMethods]=useState<ControlMethod[]>([])
+  const [serviceQuery,setServiceQuery]=useState("")
   function serviceOptions(parkIds:string[],lotIndex?:number) {
     if(!parkIds.length)return []
     const others=lotIndex===undefined?[]:value.lots.filter((_,i)=>i!==lotIndex).map(l=>directory.services.find(s=>s.id===l.serviceId)).filter((s):s is ManagedService=>!!s)
@@ -54,8 +92,13 @@ export default function SubscriberRegistration({value:raw,state,onChange,onCreat
       others.every(o=>o.vehicle===s.vehicle&&(!o.energy||!s.energy||o.energy===s.energy))&&
       (s.active||
         value.id&&parkIds.every(id=>directory.profiles.find(p=>p.id===value.id)?.lots.some(l=>l.parkId===id&&l.serviceId===s.id))))
-      .map(s=>({value:s.id,label:`${s.name} · ${vehicleVariantLabel(s.vehicle,s.energy,true)}${!s.active?" · Đã ngừng":""}`}))
   }
+  // Services offered at every selected park (counts on the vehicle buttons); a card or chosen vehicle fixes the vehicle type.
+  const scopeServices=value.lots.length?serviceOptions(value.lots.map(l=>l.parkId)):[]
+  const vehicleLocked=!!currentCard||(!!value.vehicleIds.length&&!value.noPlate)
+  const shownVehicle=vehicleLocked?value.vehicle:vehicleTab
+  const visible=(list:ManagedService[])=>list.filter(s=>s.vehicle===shownVehicle&&methods.every(m=>controlMethods(s.control).includes(m))&&
+    (!serviceQuery.trim()||normalize(s.name).includes(normalize(serviceQuery))))
   const noPlateMissingParks=value.noPlate?value.lots.filter(l=>!serviceOptions([l.parkId]).length).map(l=>managementParks.find(p=>p.id===l.parkId)?.park||l.parkId):[]
   function selectService(id:string,index?:number) {
     const service=directory.services.find(s=>s.id===id)
@@ -88,17 +131,30 @@ export default function SubscriberRegistration({value:raw,state,onChange,onCreat
         </div>
         <Field label="Hiệu lực từ" required><Input type="date" aria-label="Hiệu lực thuê bao từ" value={value.from} onChange={e=>onChange({from:e.target.value})}/></Field>
         <Field label="Hiệu lực đến" required={value.type==="Thuê bao tháng"} hint={value.type==="VIP"?"Để trống nếu không giới hạn thời gian.":undefined}><Input type="date" aria-label="Hiệu lực thuê bao đến" min={value.from} value={value.to} onChange={e=>onChange({to:e.target.value})}/></Field>
-        {value.type==="Thuê bao tháng"&&value.group==="Gian hàng"&&<><Field label="Số hợp đồng" required><Input aria-label="Số hợp đồng thuê bao" maxLength={255} value={value.contract} onChange={e=>onChange({contract:e.target.value})}/></Field><Field label="Hợp đồng đến" required><Input type="date" aria-label="Hợp đồng thuê bao đến" min={value.from>today?value.from:today} value={value.contractEnd} onChange={e=>onChange({contractEnd:e.target.value})}/></Field></>}
       </div>
+      {value.type==="Thuê bao tháng"&&value.group==="Gian hàng"&&(()=>{const ok=!!value.contract&&!!value.contractEnd&&value.contractEnd>=today&&value.contractEnd>=value.from
+        return <p className={ok?"sr-hint sr-contract":"sm-warning sr-contract"} role="status">Hợp đồng lấy từ hồ sơ khách hàng: {value.contract?<strong>{value.contract} · đến {value.contractEnd.split("-").reverse().join("/")}</strong>:"Chưa có"}.{!ok&&" Hợp đồng cần còn hiệu lực từ ngày bắt đầu thuê bao."} {owner&&<Button variant="link" onClick={onEditCustomer}>{value.contract?"Cập nhật hợp đồng":"Bổ sung hợp đồng"} trong hồ sơ {owner.name}</Button>}</p>})()}
       {value.type==="Thuê bao tháng"&&value.group==="Cư dân"&&<p className={owner?.apartment?"sr-hint":"sm-warning"}>Căn hộ lấy từ hồ sơ chủ thuê bao: {owner?.apartment||"Bổ sung căn hộ trong hồ sơ khách hàng trước khi lưu."}</p>}
     </Section>
     <Section number={3} title="Dịch vụ áp dụng" hint="Dịch vụ quyết định loại phương tiện và chế độ kiểm soát.">
       {value.type==="Thuê bao tháng"&&<label className="sm-check"><input type="checkbox" aria-label="Xe không có biển số" checked={value.noPlate} disabled={!value.lots.length} onChange={e=>onChange({noPlate:e.target.checked,vehicleIds:[]})}/>Xe không có biển số<small className="sr-hint"> Chọn trước khi chọn dịch vụ: chỉ hiện dịch vụ không bắt buộc biển số.</small></label>}
-      {value.noPlate&&noPlateMissingParks.length>0&&<p className="sm-warning" role="status">Chưa có dịch vụ Thuê bao không bắt buộc biển số tại {noPlateMissingParks.join(", ")}. Bổ sung dịch vụ (ví dụ chế độ “Biển số hoặc Thẻ”, “UHF”) tại Danh sách dịch vụ, hoặc bỏ chọn Xe không có biển số.</p>}
+      {value.noPlate&&noPlateMissingParks.length>0&&<p className="sm-warning" role="status">Chưa có dịch vụ Thuê bao không bắt buộc biển số tại {noPlateMissingParks.join(", ")}. Bổ sung dịch vụ (ví dụ chế độ “Thẻ”, “Biển số hoặc Thẻ”) tại Danh sách dịch vụ, hoặc bỏ chọn Xe không có biển số.</p>}
       {value.lots.length>1&&<div className="sr-service-mode" role="group" aria-label="Cách áp dụng dịch vụ"><label><input type="radio" name="service-mode" checked={serviceMode==="shared"} onChange={()=>{setServiceMode("shared");if(!commonServiceId)onChange({lots:value.lots.map(l=>({...l,serviceId:""}))})}}/>Dùng chung dịch vụ</label><label><input type="radio" name="service-mode" checked={serviceMode==="individual"} onChange={()=>setServiceMode("individual")}/>Chọn theo từng bãi</label></div>}
-      {serviceMode==="shared"?<Field label="Dịch vụ dùng chung" required hint={selectedParks.length?`Áp dụng tại ${selectedParks.map(p=>p.park).join(", ")}.`:"Chọn bãi xe ở phần Phạm vi sử dụng trước."}><Select aria-label="Dịch vụ dùng chung thuê bao" disabled={!value.lots.length} value={commonServiceId||""} onChange={e=>selectService(e.target.value)} options={[{value:"",label:"Chọn dịch vụ áp dụng tại tất cả bãi đã chọn"},...serviceOptions(value.lots.map(l=>l.parkId))]}/></Field>:
-        <div className="sr-lot-services">{value.lots.map((lot,i)=><div key={lot.parkId}><Field label={managementParks.find(p=>p.id===lot.parkId)?.park||"Dịch vụ"} required><Select aria-label={`Dịch vụ tại bãi ${i+1}`} value={lot.serviceId} onChange={e=>selectService(e.target.value,i)} options={[{value:"",label:"Chọn dịch vụ"},...serviceOptions([lot.parkId],i)]}/></Field>{value.id&&<label className="sm-check"><input type="checkbox" checked={lot.active} onChange={e=>onChange({lots:value.lots.map((l,j)=>i===j?{...l,active:e.target.checked}:l)})}/>Đang áp dụng</label>}</div>)}</div>}
-      {!!selectedServices.length&&<div className="sr-service-summary"><strong>{vehicleVariantLabel(value.vehicle,selectedServices.every(s=>s.energy===selectedServices[0].energy)?selectedServices[0].energy:undefined,true)}</strong><span>Kiểm soát: {[...new Set(selectedServices.map(s=>s.control))].join("; ")}</span></div>}
+      {!!value.lots.length&&<div className="sr-svc-filters">
+        <div className="sr-svc-vehicles" role="radiogroup" aria-label="Loại xe của dịch vụ">
+          {(["Ô tô","Xe máy","Xe đạp"] as const).map(v=>{const n=scopeServices.filter(s=>s.vehicle===v).length
+            return <button type="button" key={v} role="radio" aria-checked={shownVehicle===v} className={shownVehicle===v?"active":""} disabled={vehicleLocked&&v!==value.vehicle} onClick={()=>setVehicleTab(v)}>{v} <span>({n})</span></button>})}
+          {vehicleLocked&&<small className="sr-hint">{currentCard?"Theo thẻ đã cấp":"Theo xe đã chọn"}</small>}
+        </div>
+        <div className="sr-svc-methods" role="group" aria-label="Lọc theo cách nhận diện">
+          <span>Cách nhận diện:</span>
+          {controlMethodKeys.map(m=><button type="button" key={m} aria-pressed={methods.includes(m)} className={methods.includes(m)?"active":""} onClick={()=>setMethods(methods.includes(m)?methods.filter(x=>x!==m):[...methods,m])}>{m==="RFID"?"RFID (UHF)":m}</button>)}
+          {!!methods.length&&<Button variant="link" onClick={()=>setMethods([])}>Bỏ lọc</Button>}
+        </div>
+        <Input type="search" aria-label="Tìm dịch vụ" placeholder="Tìm theo tên gói…" value={serviceQuery} onChange={e=>setServiceQuery(e.target.value)}/>
+      </div>}
+      {serviceMode==="shared"?<ServicePicker label="Dịch vụ dùng chung" hint={selectedParks.length?`Áp dụng tại ${selectedParks.map(p=>p.park).join(", ")}.`:"Chọn bãi xe ở phần Phạm vi sử dụng trước."} disabled={!value.lots.length} value={commonServiceId||""} options={visible(serviceOptions(value.lots.map(l=>l.parkId)))} total={serviceOptions(value.lots.map(l=>l.parkId)).filter(s=>s.vehicle===shownVehicle).length} plateFree={value.noPlate||value.anyPlate} directory={directory} onChange={id=>selectService(id)}/>:
+        <div className="sr-lot-services">{value.lots.map((lot,i)=><div key={lot.parkId}><ServicePicker label={`Dịch vụ tại ${managementParks.find(p=>p.id===lot.parkId)?.park||`bãi ${i+1}`}`} value={lot.serviceId} options={visible(serviceOptions([lot.parkId],i))} total={serviceOptions([lot.parkId],i).filter(s=>s.vehicle===shownVehicle).length} plateFree={value.noPlate||value.anyPlate} directory={directory} onChange={id=>selectService(id,i)}/>{value.id&&<label className="sm-check"><input type="checkbox" checked={lot.active} onChange={e=>onChange({lots:value.lots.map((l,j)=>i===j?{...l,active:e.target.checked}:l)})}/>Đang áp dụng</label>}</div>)}</div>}
       {!!value.lots.length&&!noPlateMissingParks.length&&!serviceOptions(value.lots.map(l=>l.parkId)).length&&serviceMode==="shared"&&<p className="sm-warning">Chưa có dịch vụ phù hợp dùng chung cho các bãi đã chọn. Chọn theo từng bãi hoặc bổ sung dịch vụ tại Danh sách dịch vụ.</p>}
       {noPlateServiceConflict&&<p className="sm-warning" role="status">Dịch vụ đang chọn bắt buộc biển số. {value.type==="VIP"?"Thêm biển số ở phần Phương tiện hoặc đổi sang dịch vụ không bắt buộc biển số nếu chỉ sử dụng thẻ VIP.":"Chọn dịch vụ không bắt buộc biển số cho xe không có biển số."}</p>}
       {profileRequiresFace(directory,value)&&!profileHasFace(directory,value)&&<div className="sm-warning">Dịch vụ yêu cầu khuôn mặt để nhận diện khách hàng. {owner?<Button variant="link" onClick={onEditCustomer}>Bổ sung khuôn mặt cho {owner.name}</Button>:"Chọn chủ thuê bao và bổ sung ảnh khuôn mặt trước khi lưu."}</div>}

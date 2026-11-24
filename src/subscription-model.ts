@@ -37,6 +37,7 @@ export const controlModes = [
   "Biển số và Thẻ và Khuôn mặt",
   "(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)",
   "Biển số hoặc Thẻ",
+  "Thẻ",
   "Biển số và Thẻ",
   "Biển số và Khuôn mặt",
   "Biển số",
@@ -109,6 +110,9 @@ export const vehicleBrands = [
 ]
 export interface ManagedCustomer extends ManagedAudit {
   group?: string
+  /** "Gian hàng" only: the shop contract belongs to the customer and is copied onto its monthly subscriptions. */
+  contract?: string
+  contractEnd?: string
   unitId?: string
   block?: string
   faces?: FacePhoto[]
@@ -227,6 +231,31 @@ export const controlRequiresPlate = (mode: string) =>
 // "Thẻ" means a stocked Proximity/Mifare card; "UHF" / "Thẻ UHF" means the UHF tag stuck on the vehicle.
 export const branchUsesCard = (part: string) => /Thẻ(?! UHF)/.test(part)
 export const branchUsesUhf = (part: string) => part.includes("UHF")
+/** Identification methods a control mode can use, for filtering and plain-language labels. */
+export const controlMethodKeys = ["Thẻ", "Biển số", "Khuôn mặt", "RFID", "Mở tay"] as const
+export type ControlMethod = typeof controlMethodKeys[number]
+export const controlMethods = (mode: string): ControlMethod[] => controlMethodKeys.filter((key) =>
+  key === "Thẻ" ? mode.split(/ hoặc | và |[()]/).some((part) => part.trim() === "Thẻ")
+    : key === "RFID" ? mode.includes("UHF") : mode.includes(key))
+const methodPhrase: [RegExp, string][] = [
+  [/^Thẻ UHF$|^UHF$/, "quét RFID (UHF)"], [/^Thẻ$/, "quẹt thẻ"], [/^Khuôn mặt$/, "nhận diện khuôn mặt"],
+  [/^QRCODE$/, "quét QR"], [/^Mở tay$/, "bảo vệ mở tay"], [/^Biển số$/, "khớp biển số"],
+]
+/** "(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)" -> "Quẹt thẻ + khớp biển số, hoặc nhận diện khuôn mặt + khớp biển số". */
+/** With plateFree (no-plate or unlimited-plate VIP), branches that need a plate are left out: they never apply. */
+export function controlDescription(mode: string, plateFree = false) {
+  const all = mode.split(" hoặc "), usable = plateFree ? all.filter((b) => !b.includes("Biển số")) : all
+  const branches = (usable.length ? usable : all).map((branch) => {
+    const parts = branch.replace(/[()]/g, "").split(" và ").map((p) => p.trim()).filter(Boolean)
+    const phrases = parts.map((p) => methodPhrase.find(([re]) => re.test(p))?.[1] || p.toLocaleLowerCase("vi"))
+    // Identification first, plate match last.
+    phrases.sort((a, b) => Number(a === "khớp biển số") - Number(b === "khớp biển số"))
+    return phrases.join(" + ")
+  })
+  if (branches.length === 1 && branches[0] === "khớp biển số") branches[0] = "chỉ khớp biển số"
+  const text = branches.join(", hoặc ")
+  return text.charAt(0).toLocaleUpperCase("vi") + text.slice(1)
+}
 export const controlRequiresCard = (mode: string) =>
   mode.split(" hoặc ").every(branchUsesCard)
 export const controlRequiresUhf = (mode: string) =>
@@ -323,17 +352,16 @@ export function registrationForCard(state: OperationState, input: SubscriberInpu
   const card=assignedCard(state,input.id)||state.cards.find(c=>c.id===input.cardId)
   // Packages using UHF are always handled as monthly subscriptions.
   const uhf=profileUsesUhf(directoryOf(state),input)
+  const customer=directoryOf(state).customers.find(row=>row.id===input.customerId)
   return registrationInput({...input,type:!uhf&&card?.type==="VIP"?"VIP":"Thuê bao tháng",
-    group:customerSubscriptionGroup(directoryOf(state).customers.find(customer=>customer.id===input.customerId))})
+    group:customerSubscriptionGroup(customer),...customerContract(customer)})
 }
 export function updateRegistrationDraft(state: OperationState, input: SubscriberInput, patch: Partial<SubscriberInput>): SubscriberInput {
   const directory=directoryOf(state)
   let next={...input,...patch}
   if(next.estate!==input.estate) next={...next,customerId:"",members:[],vehicleIds:[],lots:[],cardId:"",cardParkId:""}
   next=registrationForCard(state,next)
-  if(next.customerId!==input.customerId || next.group!==input.group) next={...next,contract:"",contractEnd:""}
-  if(next.type!==input.type) next={...next,noPlate:false,vehicleIds:next.type==="Thuê bao tháng"&&next.vehicleIds.length>1?[]:next.vehicleIds,
-    contract:"",contractEnd:""}
+  if(next.type!==input.type) next={...next,noPlate:false,vehicleIds:next.type==="Thuê bao tháng"&&next.vehicleIds.length>1?[]:next.vehicleIds}
   if(next.noPlate) next.vehicleIds=[]
   next.lots=next.lots.map(lot=>{
     const service=directory.services.find(s=>s.id===lot.serviceId)
@@ -352,7 +380,7 @@ export function updateRegistrationDraft(state: OperationState, input: Subscriber
     if(!card||!subscriptionCardFits(state,next,card,next.cardParkId||"")) next.cardId=""
   }
   const normalized=registrationForCard(state,next)
-  if(normalized.type!==next.type) return {...normalized,contract:"",contractEnd:"",noPlate:false,vehicleIds:normalized.vehicleIds.length>1?[]:normalized.vehicleIds}
+  if(normalized.type!==next.type) return {...normalized,noPlate:false,vehicleIds:normalized.vehicleIds.length>1?[]:normalized.vehicleIds}
   return normalized
 }
 export function subscriptionCardFits(
@@ -384,7 +412,7 @@ const audit = (old?: ManagedAudit): ManagedAudit => ({
   updatedBy: "Admin Local",
 })
 export const anyPlateControlMessage =
-  "VIP không giới hạn biển số chỉ dùng gói có chế độ kiểm soát không bắt buộc biển số (ví dụ UHF, Khuôn mặt, Biển số hoặc Thẻ)."
+  "VIP không giới hạn biển số chỉ dùng gói có chế độ kiểm soát không bắt buộc biển số (ví dụ Thẻ, UHF, Khuôn mặt, Biển số hoặc Thẻ)."
 export const requiresPlateFreeControl = (
   profile: Pick<SubscriberProfile, "anyPlate" | "noPlate">,
 ) => profile.anyPlate || profile.noPlate
@@ -393,7 +421,7 @@ export const plateFreeControlMessage = (
 ) =>
   profile.anyPlate
     ? anyPlateControlMessage
-    : "Thuê bao Xe không có biển số chỉ dùng gói có chế độ kiểm soát không bắt buộc biển số (ví dụ UHF, Khuôn mặt, Biển số hoặc Thẻ)."
+    : "Thuê bao Xe không có biển số chỉ dùng gói có chế độ kiểm soát không bắt buộc biển số (ví dụ Thẻ, UHF, Khuôn mặt, Biển số hoặc Thẻ)."
 export function subscriptionIdentificationMissing(
   state: OperationState,
   id: string,
@@ -456,7 +484,7 @@ export function seedSubscriptionDirectory(
     result.services.push({
       id: `DV-TB-${vehicles.indexOf(vehicle) + 1}`,
       parkIds: managementParks.map((park) => park.id),
-      name: `Gói thuê bao ${vehicle.toLocaleLowerCase("vi")}`,
+      name: `${vehicle} – ${vehicle === "Xe đạp" ? "biển số hoặc thẻ" : "thẻ + biển số"}`,
       vehicle,
       category: "Thuê bao",
       // Bicycles rarely have plates: the sample package accepts a card instead.
@@ -516,6 +544,12 @@ export function seedSubscriptionDirectory(
       customerIndex.set(customerKey, customer)
     }
     if (customer.group === "Chưa phân nhóm" && customerGroups.includes(sub.group)) customer.group = sub.group
+    // Legacy shop contracts move onto the customer; the latest contract wins.
+    if (customer.group === "Gian hàng" && sub.group === "Gian hàng" && hasValue(sub.contract) &&
+      (!customer.contractEnd || (sub.contractEnd || "") > customer.contractEnd)) {
+      customer.contract = sub.contract
+      customer.contractEnd = sub.contractEnd || ""
+    }
     const vehicleIds: string[] = []
     if (hasValue(sub.plate)) {
       const key = `${card.estate}:${plateKey(sub.plate)}`
@@ -567,6 +601,11 @@ export function seedSubscriptionDirectory(
 /** Customer classification is independent of VIP/monthly card kind. */
 export const customerSubscriptionGroup = (customer?: Pick<ManagedCustomer, "group">) =>
   customerGroups.includes(customer?.group || "") ? customer!.group! : "Chưa phân nhóm"
+/** Contract fields a monthly subscription takes from its owner. */
+export const customerContract = (customer?: Pick<ManagedCustomer, "group" | "contract" | "contractEnd">) =>
+  customer?.group === "Gian hàng"
+    ? { contract: customer.contract || "", contractEnd: customer.contractEnd || "" }
+    : { contract: "", contractEnd: "" }
 
 export function directoryOf(state: OperationState) {
   const directory = state.directory ?? seedSubscriptionDirectory(state.cards, state.subscriptions)
@@ -703,6 +742,7 @@ function projectSubscriber(state: OperationState, id: string): OperationState {
   const fields = {
     owner: customer.name,
     group: sub.type === "VIP" ? "—" : customerSubscriptionGroup(customer),
+    ...(sub.type === "VIP" || profile.status === "Đã hủy" ? {} : customerContract(customer)),
     phone: customer.phone || "—",
     plate,
     apartment: customer.apartment || "—",
@@ -741,6 +781,15 @@ export function saveManagedCustomer(
   if (!customerGroups.includes(group)) fail("Chọn nhóm thuê bao hợp lệ trong hồ sơ khách hàng.")
   if (group === "Cư dân" && !input.apartment.trim() && (!old || old.group !== group || old.apartment))
     fail("Khách hàng cư dân cần có căn hộ trong hồ sơ.")
+  const contract = group === "Gian hàng" ? (input.contract || "").trim() : ""
+  const contractEnd = group === "Gian hàng" ? input.contractEnd || "" : ""
+  if (group === "Gian hàng") {
+    const changed = !old || old.group !== group || (old.contract || "") !== contract || (old.contractEnd || "") !== contractEnd
+    if (changed && (!contract || !dayValid(contractEnd)))
+      fail("Khách hàng gian hàng cần Số hợp đồng và ngày Hợp đồng đến.")
+    if (contract.length > 255) fail("Số hợp đồng tối đa 255 ký tự.")
+    if (changed && contractEnd < today) fail("Ngày Hợp đồng đến không được ở quá khứ.")
+  }
   const faces = input.faces ?? old?.faces ?? []
   validateFacePhotos(faces)
   if (old?.faces?.length && !faces.length) {
@@ -808,6 +857,8 @@ export function saveManagedCustomer(
     ...input,
     ...audit(old),
     group,
+    contract: contract || undefined,
+    contractEnd: contractEnd || undefined,
     faces: faces.map((photo) => ({ ...photo })),
     id: old?.id || newId("KH", directory.customers),
     name: input.name.trim(),
@@ -1077,7 +1128,8 @@ export function saveSubscriber(
   )
   if (!customer || (!customer.active && customer.id !== oldProfile?.customerId))
     fail("Chọn khách hàng đang hoạt động thuộc khu đô thị.")
-  input = { ...input, group: input.type === "VIP" ? "" : customerSubscriptionGroup(customer) }
+  input = { ...input, group: input.type === "VIP" ? "" : customerSubscriptionGroup(customer),
+    ...(input.type === "VIP" ? { contract: "", contractEnd: "" } : customerContract(customer)) }
   if (oldProfile && oldProfile.estate !== input.estate)
     fail("Không đổi khu đô thị của thuê bao đã tạo.")
   if (
@@ -1117,7 +1169,7 @@ export function saveSubscriber(
       input.contractEnd < input.from ||
       input.contractEnd < today)
   )
-    fail("Gian hàng cần hợp đồng còn hiệu lực.")
+    fail("Khách hàng gian hàng chưa có hợp đồng còn hiệu lực. Cập nhật Số hợp đồng và Hợp đồng đến trong hồ sơ khách hàng.")
   if (input.anyPlate && input.type !== "VIP")
     fail("Chỉ VIP được không giới hạn biển số.")
   if (input.type === "VIP" && input.noPlate)
