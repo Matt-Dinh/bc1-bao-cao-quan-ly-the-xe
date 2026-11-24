@@ -118,6 +118,9 @@ import {
   stockMetrics,
 } from "./report-model"
 import type { CardLookupFilters, CirculationGrouping, ReportLookupSelection } from "./report-model"
+import HandoffModeSelector, { BehaviorReportPending, RevenueReportPending } from "./HandoffModeSelector"
+import { handoffModeStorageKey, initialHandoffLocation, modeAllowsScreen, modeHome } from "./handoff-mode"
+import type { HandoffMode } from "./handoff-mode"
 
 const screenIcons = {
   stock: Warehouse,
@@ -137,11 +140,13 @@ const operationIcons = {
   lookup: Search,
   incidents: FileCheck2,
 }
+type ModuleScreen = ParkingScreen | "revenue-report" | "behavior-report"
 interface LeaveTarget {
   report?: Screen
   operation?: OperationScreen
-  parking?: { screen: ParkingScreen; patch?: Record<string, string | null>; preserve?: boolean }
+  parking?: { screen: ModuleScreen; patch?: Record<string, string | null>; preserve?: boolean }
   access?: ParkingAccess
+  mode?: HandoffMode
 }
 interface Change {
   estate: string
@@ -149,8 +154,12 @@ interface Change {
   next: Threshold
   at: string
 }
+const initialHandoff = initialHandoffLocation(window.location.search, (() => {
+  try { return localStorage.getItem(handoffModeStorageKey) } catch { return null }
+})(), false)
+const startupParams = initialHandoff.params
 const getInitial = () => {
-  const p = new URLSearchParams(window.location.search)
+  const p = new URLSearchParams(startupParams)
   const requested = screens.some((s) => s.id === p.get("screen"))
     ? p.get("screen") as Screen
     : "stock"
@@ -195,14 +204,17 @@ const getInitial = () => {
 }
 const initial = getInitial()
 function App() {
-  const [parking, setParking] = useState<ParkingScreen | null>(() => {
-    const value = new URLSearchParams(location.search).get("module")
-    return isParkingScreen(value) ? value : null
+  const [handoffMode, setHandoffMode] = useState<HandoffMode>(initialHandoff.mode)
+  const modeAllows = (id: string) => modeAllowsScreen(handoffMode, id, false)
+  const [parking, setParking] = useState<ModuleScreen | null>(() => {
+    const value = startupParams.get("module")
+    return isParkingScreen(value) || value === "revenue-report" || value === "behavior-report" ? value : null
   })
   const [parkingParams, setParkingParams] = useState(() => {
-    const params = new URLSearchParams(location.search)
-    if (!isParkingScreen(params.get("module"))) return new URLSearchParams()
+    const params = new URLSearchParams(startupParams)
+    if (!isParkingScreen(params.get("module")) && params.get("module") !== "revenue-report" && params.get("module") !== "behavior-report") return new URLSearchParams()
     params.delete("module")
+    params.delete("mode")
     return params
   })
   const [parkingAccess, setParkingAccess] = useState<ParkingAccess>(() => {
@@ -215,7 +227,7 @@ function App() {
   })
   const [parkingDirty, setParkingDirty] = useState(false)
   const [operation, setOperation] = useState<OperationScreen | null>(() => {
-    const value = new URLSearchParams(location.search).get("module")
+    const value = startupParams.get("module")
     return operationMenus.some((m) => m.id === value)
       ? value as OperationScreen
       : null
@@ -234,24 +246,24 @@ function App() {
   const [sort, setSort] = useState(false)
   const [search, setSearch] = useState(() =>
     initial.screen === "cards"
-      ? new URLSearchParams(location.search).get("q")?.slice(0, 100) || ""
+      ? new URLSearchParams(startupParams).get("q")?.slice(0, 100) || ""
       : "",
   )
   const [query, setQuery] = useState(search)
   const [page, setPage] = useState(() =>
-    Math.max(1, Number(new URLSearchParams(location.search).get("page")) || 1),
+    Math.max(1, Number(new URLSearchParams(startupParams).get("page")) || 1),
   )
   const [pageSize, setPageSize] = useState(20)
   const [groupBy, setGroupBy] = useState<CirculationGrouping>(() => {
-    const value = new URLSearchParams(location.search).get("reportGroupBy")
+    const value = new URLSearchParams(startupParams).get("reportGroupBy")
     return value === "Loại phương tiện" || value === "Nhóm khách hàng" ? value : "Loại thẻ"
   })
-  const [split, setSplit] = useState(() => new URLSearchParams(location.search).get("splitByEstate") === "1")
+  const [split, setSplit] = useState(() => new URLSearchParams(startupParams).get("splitByEstate") === "1")
   const [lookupFilters, setLookupFilters] = useState(() =>
-    operation === "lookup" ? readCardLookupParams(new URLSearchParams(location.search), initial.f) : null,
+    operation === "lookup" ? readCardLookupParams(new URLSearchParams(startupParams), initial.f) : null,
   )
   const [lookupFromReport, setLookupFromReport] = useState(() =>
-    operation === "lookup" && isReportCardLookup(new URLSearchParams(location.search)),
+    operation === "lookup" && isReportCardLookup(new URLSearchParams(startupParams)),
   )
   const [detail, setDetail] = useState<Card | null>(null)
   const [detailTab, setDetailTab] = useState("Thông tin thẻ")
@@ -281,13 +293,13 @@ function App() {
   const [account, setAccount] = useState(false)
   const [sortKey, setSortKey] = useState(() => {
     const key =
-      new URLSearchParams(location.search).get("sort")?.replace(/^-/, "") ||
+      new URLSearchParams(startupParams).get("sort")?.replace(/^-/, "") ||
       "id"
     return key in columnNames ? key : "id"
   })
   const [sortDesc, setSortDesc] = useState(
     () =>
-      new URLSearchParams(location.search).get("sort")?.startsWith("-") ||
+      new URLSearchParams(startupParams).get("sort")?.startsWith("-") ||
       false,
   )
   const [previewState, setPreviewState] = useState("ready")
@@ -317,10 +329,11 @@ function App() {
     if (parking) {
       const params = new URLSearchParams(parkingParams)
       params.set("module", parking)
+      params.set("mode", handoffMode)
       window.history.replaceState(null, "", `${window.location.pathname}?${params}`)
       return
     }
-    const p = new URLSearchParams({ screen })
+    const p = new URLSearchParams({ screen, mode: handoffMode })
     if (operation) p.set("module", operation)
     for (const [key, value] of Object.entries(applied))
       if (value && value !== defaults[(key as keyof Filters)]) p.set(key, value)
@@ -335,7 +348,10 @@ function App() {
     if (sortDesc || sortKey !== "id")
       p.set("sort", `${sortDesc ? "-" : ""}${sortKey}`)
     window.history.replaceState(null, "", `${window.location.pathname}?${p}`)
-  }, [screen, applied, query, page, sortKey, sortDesc, operation, parking, parkingParams, lookupFilters, lookupFromReport, groupBy, split])
+  }, [screen, applied, query, page, sortKey, sortDesc, operation, parking, parkingParams, lookupFilters, lookupFromReport, groupBy, split, handoffMode])
+  useEffect(() => {
+    try { localStorage.setItem(handoffModeStorageKey, handoffMode) } catch { /* The URL still preserves the mode. */ }
+  }, [handoffMode])
   useEffect(() => {
     const changed = parkingDirty || (editing && JSON.stringify(edit) !== originalEdit)
     function leave(e: BeforeUnloadEvent) {
@@ -422,6 +438,7 @@ function App() {
       ...(key === "estate" ? { park: "" } : {}),
     }))
   function chooseOperation(id: OperationScreen, force = false) {
+    if (!force && !modeAllows(id)) { setToast("Màn hình thuộc mode bàn giao khác. Chọn mode tương ứng để xem."); return }
     if (operation === id) {
       setMobile(false)
       return
@@ -442,6 +459,7 @@ function App() {
   }
   function navigate(id: Screen, force = false) {
     if (id === "circulation" || id === "alerts") id = "stock"
+    if (!force && !modeAllows(id)) { setToast("Màn hình thuộc mode bàn giao khác. Chọn mode tương ứng để xem."); return }
     if ((operationDirty || parkingDirty) && !force) {
       setLeaveTarget({ report: id })
       return
@@ -474,7 +492,8 @@ function App() {
   function updateParking(patch: Record<string, string | null>) {
     setParkingParams((params) => applyParkingParams(params, patch))
   }
-  function chooseParking(id: ParkingScreen, patch?: Record<string, string | null>, preserve = false, force = false) {
+  function chooseParking(id: ModuleScreen, patch?: Record<string, string | null>, preserve = false, force = false) {
+    if (!force && !modeAllows(id)) { setToast("Màn hình thuộc mode bàn giao khác. Chọn mode tương ứng để xem."); return }
     if (parking === id && !patch) { setMobile(false); return }
     if ((operationDirty || parkingDirty) && !force) {
       setLeaveTarget({ parking: { screen: id, patch, preserve } })
@@ -488,6 +507,29 @@ function App() {
     setParkingDirty(false)
     setMobile(false)
     if (!preserve) window.scrollTo(0, 0)
+  }
+  function changeHandoffMode(next: HandoffMode, force = false) {
+    if (next === handoffMode) return
+    if (!force && (operationDirty || parkingDirty || editing && JSON.stringify(edit) !== originalEdit)) {
+      setLeaveTarget({ mode: next })
+      return
+    }
+    setHandoffMode(next)
+    setDetail(null)
+    setDrawer(null)
+    setEditing(null)
+    setNotifications(false)
+    setAccount(false)
+    setHelp(false)
+    setLeaveTarget(null)
+    const home = modeHome(next)
+    if (home === "stock") navigate("stock", true)
+    else chooseParking(home, undefined, false, true)
+  }
+  function navigateHome() {
+    const home = modeHome(handoffMode)
+    if (home === "stock") navigate("stock")
+    else chooseParking(home)
   }
   function changeParkingAccess(access: ParkingAccess, force = false) {
     if (parkingDirty && !force) { setLeaveTarget({ access }); return }
@@ -1928,7 +1970,7 @@ function App() {
 
   function renderOperationMenu(group: typeof operationMenus[number]["group"]) {
     return operationMenus
-      .filter((menu) => menu.group === group)
+      .filter((menu) => menu.group === group && modeAllows(menu.id))
       .map((menu) => {
         const Icon = operationIcons[menu.id]
         return (
@@ -1951,7 +1993,7 @@ function App() {
       "parking-report": FileBarChart2, "parking-alerts": TriangleAlert, "parking-trips": Search,
       "parking-capacity": Warehouse, "parking-settings": Settings2,
     }
-    return parkingMenus.filter((menu) => menu.id !== "parking-alerts" && menu.group === group && canOpen(parkingAccess, menu.id)).map((menu) => {
+    return parkingMenus.filter((menu) => menu.id !== "parking-alerts" && menu.group === group && modeAllows(menu.id) && canOpen(parkingAccess, menu.id)).map((menu) => {
       const Icon = icons[menu.id]
       const active = parking === menu.id
       return <Button variant="ghost" className={`subnav-item ${active ? "active" : ""}`} key={menu.id}
@@ -1960,6 +2002,8 @@ function App() {
       </Button>
     })
   }
+  const firstParkingOperation = parkingMenus.find(menu => menu.group === "Quản lý chỗ đỗ" && menu.id !== "parking-alerts" && modeAllows(menu.id) && canOpen(parkingAccess, menu.id))
+  const firstConfiguration = modeAllows("settings") ? "settings" : parkingMenus.find(menu => menu.group === "Cấu hình" && modeAllows(menu.id) && canOpen(parkingAccess, menu.id))?.id
 
   return (
     <div className={`app ${collapsed ? "sidebar-collapsed" : ""}`}>
@@ -1999,14 +2043,12 @@ function App() {
           <Button
             variant="ghost"
             className="nav-item"
-            onClick={() => {
-              setHelp(true)
-            }}
+            onClick={navigateHome}
           >
             <LayoutDashboard size={18} />
             <span>Tổng quan</span>
           </Button>
-          <div
+          {modeAllows("subscriptions") && <div
             className="nav-section"
             role="group"
             aria-label="Quản lý thuê bao"
@@ -2025,22 +2067,22 @@ function App() {
             <div className="subnav customer-navigation">
               {renderOperationMenu("Quản lý thuê bao")}
             </div>
-          </div>
-          <Button variant="ghost" className={`nav-item ${operation === "customers" ? "active" : ""}`}
+          </div>}
+          {modeAllows("customers") && <Button variant="ghost" className={`nav-item ${operation === "customers" ? "active" : ""}`}
             aria-current={operation === "customers" ? "page" : undefined} onClick={() => chooseOperation("customers")}>
             <Users size={18} /><span>Khách hàng</span>
-          </Button>
-          <div className="nav-section" role="group" aria-label="Quản lý xe">
+          </Button>}
+          {modeAllows("vehicles") && <div className="nav-section" role="group" aria-label="Quản lý xe">
             <Button variant="ghost" className="nav-item nav-section-label" aria-label="Quản lý xe" onClick={() => chooseOperation("vehicles")}>
               <CarFront size={18} /><span>Quản lý xe</span><ChevronDown size={14} />
             </Button><div className="subnav">{renderOperationMenu("Quản lý xe")}</div>
-          </div>
-          <div className="nav-section" role="group" aria-label="Dịch vụ">
+          </div>}
+          {modeAllows("services") && <div className="nav-section" role="group" aria-label="Dịch vụ">
             <Button variant="ghost" className="nav-item nav-section-label" aria-label="Dịch vụ" onClick={() => chooseOperation("services")}>
               <Settings2 size={18} /><span>Dịch vụ</span><ChevronDown size={14} />
             </Button><div className="subnav">{renderOperationMenu("Dịch vụ")}</div>
-          </div>
-          <div className="nav-section" role="group" aria-label="Quản lý thẻ">
+          </div>}
+          {modeAllows("inventory") && <div className="nav-section" role="group" aria-label="Quản lý thẻ">
             <Button
               variant="ghost"
               className="nav-item nav-section-label"
@@ -2055,10 +2097,10 @@ function App() {
             <div className="subnav op-navigation">
               {renderOperationMenu("Quản lý thẻ")}
             </div>
-          </div>
-          {parkingMenus.some((menu) => menu.group === "Quản lý chỗ đỗ" && canOpen(parkingAccess, menu.id)) && <div className="nav-section" role="group" aria-label="Quản lý chỗ đỗ">
+          </div>}
+          {firstParkingOperation && <div className="nav-section" role="group" aria-label="Quản lý chỗ đỗ">
             <Button variant="ghost" className="nav-item nav-section-label" aria-label="Quản lý chỗ đỗ" title="Quản lý chỗ đỗ"
-              onClick={() => chooseParking("parking-trips")}>
+              onClick={() => chooseParking(firstParkingOperation.id)}>
               <ParkingSquare size={18} /><span>Quản lý chỗ đỗ</span><ChevronDown size={14} />
             </Button>
             <div className="subnav">{renderParkingMenu("Quản lý chỗ đỗ")}</div>
@@ -2069,7 +2111,7 @@ function App() {
               className="nav-item nav-section-label"
               aria-label="Báo cáo"
               title="Báo cáo"
-              onClick={() => navigate("stock")}
+              onClick={navigateHome}
             >
               <ChartNoAxesCombined size={18} />
               <span>Báo cáo</span>
@@ -2077,7 +2119,7 @@ function App() {
             </Button>
             <div className="subnav">
               {screens
-                .filter((s) => s.id === "stock")
+                .filter((s) => s.id === "stock" && modeAllows(s.id))
                 .map((s) => {
                   const Icon = screenIcons[s.id]
                   return (
@@ -2106,21 +2148,29 @@ function App() {
                   )
                 })}
               {renderParkingMenu("Báo cáo")}
+              {modeAllows("revenue-report") && <Button variant="ghost" className={`subnav-item ${parking === "revenue-report" ? "active" : ""}`}
+                aria-current={parking === "revenue-report" ? "page" : undefined} onClick={() => chooseParking("revenue-report")}>
+                <FileBarChart2 size={15} /><span>Báo cáo doanh thu</span>{parking === "revenue-report" && <span className="active-dot" />}
+              </Button>}
+              {modeAllows("behavior-report") && <Button variant="ghost" className={`subnav-item ${parking === "behavior-report" ? "active" : ""}`}
+                aria-current={parking === "behavior-report" ? "page" : undefined} onClick={() => chooseParking("behavior-report")}>
+                <Users size={15} /><span>Báo cáo phân tích hành vi khách hàng</span>{parking === "behavior-report" && <span className="active-dot" />}
+              </Button>}
             </div>
           </div>
-          <div role="group" aria-label="Cấu hình">
+          {firstConfiguration && <div role="group" aria-label="Cấu hình">
             <Button
               variant="ghost"
               className="nav-item nav-section-label configuration-label"
               aria-label="Cấu hình"
               title="Cấu hình"
-              onClick={() => navigate("settings")}
+              onClick={() => firstConfiguration === "settings" ? navigate("settings") : chooseParking(firstConfiguration)}
             >
               <Settings2 size={18} />
               <span>Cấu hình</span>
               <ChevronDown size={14} />
             </Button>
-            <Button
+            {modeAllows("settings") && <Button
               variant="ghost"
               className={`subnav-item config-item ${
                 !operation && !parking && screen === "settings" ? "active" : ""
@@ -2132,9 +2182,9 @@ function App() {
             >
               <span className="small-nav-line" />
               <span>Tham số báo cáo thẻ xe</span>
-            </Button>
+            </Button>}
             <div className="subnav">{renderParkingMenu("Cấu hình")}</div>
-          </div>
+          </div>}
         </nav>
         <div className="sidebar-bottom">
           <div className="support-card">
@@ -2175,11 +2225,7 @@ function App() {
               <Menu size={21} />
             </Button>
             <span className="portal-label">Hệ thống quản lý bãi đỗ xe</span>
-            <span className="topbar-divider" />
-            <span className="environment-indicator">
-              <span />
-              VCR Operations
-            </span>
+            <HandoffModeSelector value={handoffMode} onChange={changeHandoffMode} />
           </div>
           <div className="topbar-right">
             <span className="today-label">
@@ -2209,7 +2255,7 @@ function App() {
               {notifications && (
                 <div className="popover notifications-popover">
                   <Heading level={3}>Thông báo</Heading>
-                  {parkingModel.notices.map((notice) => <div className="notification-entry" key={notice.id}>
+                  {modeAllows("parking-trips") && parkingModel.notices.map((notice) => <div className="notification-entry" key={notice.id}>
                     <span className="notification-icon amber"><TriangleAlert size={18} /></span>
                     <div><strong>Vượt sức chứa · {siteById(notice.site)?.label}</strong>
                       <span>{notice.vehicle} · {fmt(notice.count)} xe / {fmt(notice.design)} chỗ quy hoạch</span>
@@ -2235,7 +2281,7 @@ function App() {
                       <Button variant="link" onClick={() => parkingModel.downloadExport(file.id)}>Tải file <Download size={12} /></Button>
                     </div>
                   </div>)}
-                  <div className="notification-entry">
+                  {modeAllows("stock") && <div className="notification-entry">
                     <span className="notification-icon">
                       <FileSpreadsheet size={18} />
                     </span>
@@ -2244,8 +2290,8 @@ function App() {
                       <span>Đã tổng hợp số liệu đến 28/10/2026.</span>
                       <small>29/10/2026 05:45</small>
                     </div>
-                  </div>
-                  <div className="notification-entry">
+                  </div>}
+                  {modeAllows("stock") && <div className="notification-entry">
                     <span className="notification-icon amber">
                       <TriangleAlert size={18} />
                     </span>
@@ -2263,7 +2309,7 @@ function App() {
                         <ArrowRight size={12} />
                       </Button>
                     </div>
-                  </div>
+                  </div>}
                 </div>
               )}
             </div>
@@ -2323,9 +2369,11 @@ function App() {
             sharedState={cardOperations}
             onStateChange={setCardOperations}
           />
-          {parking && <Parking key={`${parkingAccess.role}/${parkingAccess.estate}`} screen={parking} params={parkingParams}
+          {parking && isParkingScreen(parking) && <Parking key={`${parkingAccess.role}/${parkingAccess.estate}`} screen={parking} params={parkingParams}
             access={parkingAccess} model={parkingModel} update={updateParking} navigate={chooseParking}
-            home={() => navigate("stock")} onDirty={setParkingDirty} notify={setToast} revenue={revenueModel} />}
+            home={navigateHome} onDirty={setParkingDirty} notify={setToast} revenue={revenueModel} />}
+          {parking === "revenue-report" && <RevenueReportPending />}
+          {parking === "behavior-report" && <BehaviorReportPending />}
           <div hidden={!!operation || !!parking}>
             <div className="breadcrumbs">
               <span>{screen === "settings" ? "Cấu hình" : "Báo cáo"}</span>
@@ -3219,7 +3267,8 @@ function App() {
               <Button
                 variant="primary"
                 onClick={() => {
-                  if (leaveTarget.report) navigate(leaveTarget.report, true)
+                  if (leaveTarget.mode) changeHandoffMode(leaveTarget.mode, true)
+                  else if (leaveTarget.report) navigate(leaveTarget.report, true)
                   else if (leaveTarget.operation)
                     chooseOperation(leaveTarget.operation, true)
                   else if (leaveTarget.parking)
