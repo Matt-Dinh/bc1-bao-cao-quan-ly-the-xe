@@ -30,7 +30,7 @@ export function saveCardDetails(state: OperationState,input: CardEditInput): Ope
   if ([input.frontCode,input.rearCode].some(v=>v.trim().length>50||/[\u0000-\u001f\u007f]/.test(v))) throw new Error("Mã thẻ mặt trước/mặt sau tối đa 50 ký tự, không chứa ký tự điều khiển.")
   if(value.note.length>500) throw new Error("Mô tả tối đa 500 ký tự.")
   if(!cardTypes.includes(value.type)||!vehicles.includes(value.vehicle)) throw new Error("Chọn loại thẻ và loại phương tiện hợp lệ.")
-  if(value.technology && !cardTechnologies.some(t=>t===value.technology)) throw new Error("Chọn kiểu thẻ Mifare hoặc Proximity. Thẻ UHF đăng ký trực tiếp trong thuê bao.")
+  if(value.technology && !cardTechnologies.some(t=>t===value.technology)) throw new Error("Chọn kiểu thẻ Mifare hoặc Proximity. Thẻ UHF khai báo bằng mã thẻ RFID trong hồ sơ xe.")
   if(card.technology && !value.technology) throw new Error("Không bỏ trống kiểu thẻ đã có.")
   if(value.unitId && !managementUnits.some(u=>u.id===value.unitId&&u.estate===card.estate)) throw new Error("Đơn vị không phù hợp khu đô thị đang quản lý thẻ.")
   if((value.type!==card.type||value.vehicle!==card.vehicle)&&!canReclassifyCard(state,card)) throw new Error("Chỉ đổi loại thẻ hoặc loại phương tiện khi thẻ Trong kho và chưa gắn thuê bao. Cần thu hồi thẻ đang lưu hành trước.")

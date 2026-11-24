@@ -9,6 +9,7 @@ export function EntityPicker({
   options,
   required = false,
   disabled = false,
+  placeholder,
 }: {
   label: string
   value: string
@@ -16,6 +17,7 @@ export function EntityPicker({
   options: { value: string; label: string }[]
   required?: boolean
   disabled?: boolean
+  placeholder?: string
 }) {
   const [query, setQuery] = useState("")
   const matching = options
@@ -32,7 +34,7 @@ export function EntityPicker({
         disabled={disabled}
         type="search"
         aria-label={`Tìm ${label.toLocaleLowerCase("vi")}`}
-        placeholder={label.includes("thẻ")?"Tìm mã thẻ, mã mặt trước hoặc mặt sau…":label.includes("Xe")?"Tìm biển số hoặc mã xe…":"Tìm theo tên, mã hoặc số điện thoại…"}
+        placeholder={placeholder??(label.includes("thẻ")?"Tìm mã thẻ, mã mặt trước hoặc mặt sau…":label.includes("Xe")?"Tìm biển số hoặc mã xe…":"Tìm theo tên, mã hoặc số điện thoại…")}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />

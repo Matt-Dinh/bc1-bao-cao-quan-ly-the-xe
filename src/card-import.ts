@@ -22,7 +22,7 @@ export function checkCardImportRows(rows: CardImportRow[], cards: Card[], defaul
       : seen.has(code) ? "Trùng mã trong danh sách nhập"
       : (row.frontCode || "").trim().length > 50 || (row.rearCode || "").trim().length > 50
         ? "Mã mặt trước / mặt sau tối đa 50 ký tự"
-        : !cardTechnologies.includes(technology as typeof cardTechnologies[number]) ? "Chọn kiểu thẻ Mifare hoặc Proximity (thẻ UHF không nhập kho)" : ""
+        : !cardTechnologies.includes(technology as typeof cardTechnologies[number]) ? "Chọn kiểu thẻ Mifare hoặc Proximity (thẻ UHF khai báo mã thẻ RFID trong hồ sơ xe, không nhập kho)" : ""
     seen.add(code)
     return { ...row, id, error }
   })

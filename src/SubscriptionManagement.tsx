@@ -60,6 +60,8 @@ import {
   subscriptionCardFits,
   serviceMatchesScope,
   profileUsesCard,
+  profileRfidVehicle,
+  profileUsesUhf,
   subscriberCards,
   subscriberInput,
   subscriptionStates,
@@ -163,6 +165,7 @@ const emptyCustomer = (estate = ""): ManagedCustomer => ({
   note: "",
 })
 const emptyVehicle = (estate = "", vehicle = "Ô tô"): ManagedVehicle => ({
+  rfid: "",
   energy: "",
   id: "",
   estate,
@@ -475,11 +478,14 @@ export default function SubscriptionManagement({
         const updated = { ...parentEditor.value }
         if (editor.kind === "customer")
           updated.customerId = editor.value.id || nextDirectory.customers[0].id
-        else
+        else {
+          // Editing a vehicle (e.g. adding its RFID) keeps it selected; a new vehicle is added.
+          const vehicleId = editor.value.id || nextDirectory.vehicles[0].id
           updated.vehicleIds =
             updated.type === "VIP"
-              ? [...updated.vehicleIds, nextDirectory.vehicles[0].id]
-              : [nextDirectory.vehicles[0].id]
+              ? Array.from(new Set([...updated.vehicleIds, vehicleId]))
+              : [vehicleId]
+        }
         setEditor({ kind: "subscriber", value: updateRegistrationDraft(next, parentEditor.value, updated) })
         setParentEditor(null)
         setDirty(true)
@@ -543,7 +549,7 @@ export default function SubscriptionManagement({
       (!appliedFilters.park.length ||
         profile.lots.some((lot) => appliedFilters.park.includes(lot.parkId))) &&
       normalize(
-        [sub.id, owner?.name, owner?.phone, sub.plate, card?.id].join(" "),
+        [sub.id, owner?.name, owner?.phone, sub.plate, card?.id, ...profile.vehicleIds.map((id) => vehicleMap.get(id)?.rfid)].join(" "),
       ).includes(normalize(appliedFilters.search))
     )
   })
@@ -575,7 +581,7 @@ export default function SubscriptionManagement({
       anyOf(appliedFilters.estate, row.estate) &&
       anyOf(appliedFilters.status, String(row.active)) &&
       matchesVehicleChoices(row.vehicle,row.energy,appliedFilters.vehicleChoices) &&
-      normalize([row.id, row.plate, row.brand, row.color].join(" ")).includes(
+      normalize([row.id, row.plate, row.rfid, row.brand, row.color].join(" ")).includes(
         normalize(appliedFilters.search),
       ),
   )
@@ -1036,17 +1042,14 @@ export default function SubscriptionManagement({
                 ))}
               </div>
               <h3 className="sm-subheading">Thẻ cấp cho thuê bao</h3>
-              {selectedProfile.uhf && (
+              {profileUsesUhf(directory, selectedProfile) && profileRfidVehicle(directory, selectedProfile) && (
                 <div className="sm-card-panel">
                   <CreditCard size={23} />
                   <div>
-                    <strong>Thẻ UHF {selectedProfile.uhf.code}</strong>
+                    <strong>Thẻ UHF {profileRfidVehicle(directory, selectedProfile)!.rfid}</strong>
                     <p>
-                      {selectedProfile.uhf.label
-                        ? `Mã in trên tem: ${selectedProfile.uhf.label} · `
-                        : ""}
-                      Dán trên xe, không quản lý trong kho. Đổi mã thẻ UHF tại
-                      Chỉnh sửa thuê bao.
+                      Mã thẻ RFID của xe {profileRfidVehicle(directory, selectedProfile)!.plate}, dán trên xe,
+                      không quản lý trong kho. Đổi mã thẻ RFID tại Danh sách xe.
                     </p>
                   </div>
                 </div>
@@ -1185,6 +1188,7 @@ export default function SubscriptionManagement({
                     estates.find((e) => e.id === selectedVehicle.estate)?.name,
                   ],
                   ["Loại phương tiện",vehicleVariantLabel(selectedVehicle.vehicle,selectedVehicle.energy)],
+                  ["Mã thẻ RFID", selectedVehicle.rfid || "Chưa khai báo"],
                   ["Hãng xe", selectedVehicle.brand],
                   ["Màu xe", selectedVehicle.color],
                   ["Voucher", selectedVehicle.useVoucher ? "Có" : "Không"],
@@ -1484,6 +1488,17 @@ export default function SubscriptionManagement({
                     onChange={e=>{const [vehicle,energy]=e.target.value.split("|");change({vehicle:vehicle||"Ô tô",energy:energy||""})}}
                     options={[{value:"",label:"Chọn loại phương tiện"},...vehicleChoiceOptions()]}/>
                 </Field>
+                <Field label="Mã thẻ RFID" hint="Mã EPC của tem UHF dán trên xe. Không bắt buộc; cần khi xe dùng dịch vụ có đầu đọc UHF. Mã là duy nhất và không nhập kho.">
+                  <Input
+                    aria-label="Mã thẻ RFID"
+                    maxLength={50}
+                    placeholder="VD: E2801160600002084B0C1F2A"
+                    value={editor.value.rfid ?? ""}
+                    onChange={(event) =>
+                      change({ rfid: event.target.value.replace(/\s/g, "").toUpperCase() })
+                    }
+                  />
+                </Field>
                 <Field label="Hãng xe" required>
                   <Select
                     aria-label="Hãng xe"
@@ -1636,6 +1651,7 @@ export default function SubscriptionManagement({
               onCreateCustomer={()=>{setParentEditor(editor);open({kind:"customer",value:emptyCustomer(editor.value.estate)})}}
               onEditCustomer={()=>{const customer=customers.get(editor.value.customerId);if(customer){setParentEditor(editor);open({kind:"customer",value:{...customer}})}}}
               onCreateVehicle={()=>{setParentEditor(editor);open({kind:"vehicle",value:emptyVehicle(editor.value.estate,editor.value.vehicle)})}}
+              onEditVehicle={id=>{const vehicle=vehicleMap.get(id);if(vehicle){setParentEditor(editor);open({kind:"vehicle",value:{...vehicle}})}}}
               onCard={onCard}/>}
             {editor.kind === "issue" && issueSub && issueProfile && (
               <>

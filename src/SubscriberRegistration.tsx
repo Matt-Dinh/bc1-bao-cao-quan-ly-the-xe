@@ -9,7 +9,7 @@ import type { OperationState } from "./operations-model"
 import {
   assignedCard, controlRequiresPlate, customerSubscriptionGroup, directoryOf, managementParks, registrationInput, registrationForCard,
   subscriberRequiresCard, subscriptionCardFits,
-  profileHasFace,profileRequiresFace,profileUsesCard,profileRequiresUhf,profileUsesUhf,
+  profileHasFace,profileRequiresFace,profileUsesCard,profileRequiresUhf,profileUsesUhf,profileRfidVehicle,
 } from "./subscription-model"
 import type { ManagedService, SubscriberInput } from "./subscription-model"
 import { vehicleVariantLabel, vehicleVariantOptions } from "./vehicle-energy"
@@ -17,9 +17,9 @@ import { vehicleVariantLabel, vehicleVariantOptions } from "./vehicle-energy"
 function Section({number,title,hint,children}:{number:number;title:string;hint?:string;children:ReactNode}) {
   return <section className="sr-section"><div className="sr-section-heading"><span>{number}</span><div><h3>{title}</h3>{hint&&<p>{hint}</p>}</div></div>{children}</section>
 }
-export default function SubscriberRegistration({value:raw,state,onChange,onCreateCustomer,onEditCustomer,onCreateVehicle,onCard}:{
+export default function SubscriberRegistration({value:raw,state,onChange,onCreateCustomer,onEditCustomer,onCreateVehicle,onEditVehicle,onCard}:{
   value:SubscriberInput;state:OperationState;onChange:(patch:Partial<SubscriberInput>)=>void
-  onCreateCustomer:()=>void;onEditCustomer:()=>void;onCreateVehicle:()=>void;onCard:(card:Card,id:string)=>void
+  onCreateCustomer:()=>void;onEditCustomer:()=>void;onCreateVehicle:()=>void;onEditVehicle?:(id:string)=>void;onCard:(card:Card,id:string)=>void
 }) {
   const value=registrationForCard(state,raw),directory=directoryOf(state)
   const currentCard=assignedCard(state,value.id)
@@ -42,7 +42,9 @@ export default function SubscriberRegistration({value:raw,state,onChange,onCreat
   const chosenCard=currentCard||state.cards.find(c=>c.id===value.cardId)
   const cardReady=servicesReady
   const vehicleOptions=directory.vehicles.filter(v=>v.estate===value.estate&&v.vehicle===value.vehicle&&(v.active||value.vehicleIds.includes(v.id))&&selectedServices.every(s=>!s.energy||s.energy===v.energy))
-    .map(v=>({value:v.id,label:`${v.plate} · ${vehicleVariantLabel(v.vehicle,v.energy)} · ${v.id}`}))
+    .map(v=>({value:v.id,label:`${v.plate}${usesUhf?` · RFID ${v.rfid||"chưa có"}`:""} · ${vehicleVariantLabel(v.vehicle,v.energy)} · ${v.id}`}))
+  // UHF gates read the RFID tag declared on the vehicle record.
+  const rfidVehicle=profileRfidVehicle(directory,value),pickedVehicle=directory.vehicles.find(v=>v.id===value.vehicleIds[0])
   const commonServiceId=value.lots.length&&value.lots.every(l=>l.serviceId===value.lots[0].serviceId)?value.lots[0].serviceId:""
   function serviceOptions(parkIds:string[],lotIndex?:number) {
     if(!parkIds.length)return []
@@ -101,12 +103,7 @@ export default function SubscriberRegistration({value:raw,state,onChange,onCreat
       {noPlateServiceConflict&&<p className="sm-warning" role="status">Dịch vụ đang chọn bắt buộc biển số. {value.type==="VIP"?"Thêm biển số ở phần Phương tiện hoặc đổi sang dịch vụ không bắt buộc biển số nếu chỉ sử dụng thẻ VIP.":"Chọn dịch vụ không bắt buộc biển số cho xe không có biển số."}</p>}
       {profileRequiresFace(directory,value)&&!profileHasFace(directory,value)&&<div className="sm-warning">Dịch vụ yêu cầu khuôn mặt để nhận diện khách hàng. {owner?<Button variant="link" onClick={onEditCustomer}>Bổ sung khuôn mặt cho {owner.name}</Button>:"Chọn chủ thuê bao và bổ sung ảnh khuôn mặt trước khi lưu."}</div>}
     </Section>
-    <Section number={4} title="Thẻ đăng ký" hint={usesUhf?"Dịch vụ dùng thẻ UHF nên áp dụng quy tắc thuê bao tháng (một xe). Có thể đăng ký thêm thẻ Proximity/Mifare nếu cần.":"Chọn thẻ VIP để đăng ký nhiều biển số hoặc không đăng ký biển số. Thẻ tháng áp dụng cho một xe."}>
-      {usesUhf&&<div className="sr-uhf">
-        <Field label="Mã thẻ UHF dán trên xe" required={uhfRequired} hint="Mã EPC đọc được từ đầu đọc UHF. Thẻ UHF dán trên xe nên không nhập kho, không giao nhận hay thu hồi."><Input aria-label="Mã thẻ UHF" maxLength={50} value={value.uhfCode??""} placeholder="VD: E2801160600002084B0C1F2A" onChange={e=>onChange({uhfCode:e.target.value.replace(/\s/g,"")})}/></Field>
-        <Field label="Mã in trên tem" hint="Không bắt buộc. Dùng để đối chiếu khi kiểm tra xe."><Input aria-label="Mã in trên tem UHF" maxLength={50} value={value.uhfLabel??""} onChange={e=>onChange({uhfLabel:e.target.value})}/></Field>
-        {uhfRequired&&!value.uhfCode?.trim()&&<p className="sm-warning" role="status">Chế độ kiểm soát của dịch vụ yêu cầu thẻ UHF. Nhập mã thẻ UHF dán trên xe trước khi lưu.</p>}
-      </div>}
+    <Section number={4} title="Thẻ đăng ký" hint={usesUhf?"Dịch vụ dùng thẻ UHF dán trên xe (mã thẻ RFID khai báo trong hồ sơ xe) nên áp dụng quy tắc thuê bao tháng (một xe). Có thể đăng ký thêm thẻ Proximity/Mifare nếu cần.":"Chọn thẻ VIP để đăng ký nhiều biển số hoặc không đăng ký biển số. Thẻ tháng áp dụng cho một xe."}>
       {currentCard?<div className="sm-card-panel"><CreditCard size={23}/><div><strong>{currentCard.id}</strong><p>{currentCard.type} · {currentCard.vehicle}. Thu hồi thẻ trước khi thay thẻ, đổi loại thuê bao hoặc bỏ bãi đang quản lý thẻ.</p></div><Button onClick={()=>onCard(currentCard,value.id)}>Quản lý thẻ</Button></div>:servicesReady&&!cardUsed?<p className="sr-hint sr-no-card" role="status"><strong>Dịch vụ không sử dụng thẻ Proximity/Mifare.</strong> Thuê bao được nhận diện theo chế độ kiểm soát của dịch vụ nên không cấp thẻ.</p>:<>
         <p className={cardRequired?"sr-required-card":"sr-hint"}>{value.anyPlate?"Thuê bao dùng thẻ VIP. Có thể đăng ký biển số bên dưới hoặc để trống nếu dịch vụ hỗ trợ.":cardRequired?"Chế độ kiểm soát của dịch vụ yêu cầu thẻ Proximity/Mifare.":"Dịch vụ không bắt buộc thẻ Proximity/Mifare. Có thể cấp ngay trong lần đăng ký này."}</p>
         {activeLots.length>1?<Field label="Kho lấy thẻ" hint="Lấy thẻ từ một trong các bãi đã chọn; thẻ được sử dụng tại các bãi đang áp dụng."><Select aria-label="Kho lấy thẻ thuê bao" value={cardParkId} disabled={!servicesReady} onChange={e=>onChange({cardParkId:e.target.value,cardId:""})} options={activeLots.map(l=>({value:l.parkId,label:managementParks.find(p=>p.id===l.parkId)?.label||l.parkId}))}/></Field>:!!cardParkId&&<p className="sr-hint">Kho lấy thẻ: <strong>{managementParks.find(p=>p.id===cardParkId)?.park}</strong></p>}
@@ -118,15 +115,18 @@ export default function SubscriberRegistration({value:raw,state,onChange,onCreat
       <p className="sr-hint" aria-live="polite">{value.type==="VIP"?"Đã chọn thẻ VIP · Thuê bao VIP: có thể chọn nhiều biển số hoặc để trống.":usesUhf?"Dịch vụ dùng thẻ UHF · Thuê bao tháng: sử dụng một xe.":servicesReady&&!cardUsed&&!currentCard?"Thuê bao tháng: sử dụng một xe.":chosenCard?"Đã chọn thẻ tháng · Thuê bao tháng: sử dụng một xe.":"Chưa chọn thẻ: áp dụng quy tắc thuê bao tháng. Chọn thẻ VIP để mở lựa chọn nhiều biển số."}</p>
       {chosenCard&&<details className="sr-card-details"><summary>Thông tin thẻ đã chọn</summary><div className="sm-detail-grid">{[["Mã mặt trước",chosenCard.frontCode],["Mã mặt sau",chosenCard.rearCode],["Kiểu thẻ",chosenCard.technology]].map(([label,v])=><div key={label}><span>{label}</span><strong>{v||"Chưa có thông tin"}</strong></div>)}</div></details>}
     </Section>
-    <Section number={5} title="Phương tiện sử dụng" hint={value.type==="VIP"?"Có thể chọn nhiều biển số (tối đa 10) hoặc để trống và dùng thẻ VIP.":"Chọn một xe phù hợp dịch vụ hoặc khai báo xe không có biển số."}>
+    <Section number={5} title="Phương tiện sử dụng" hint={value.type==="VIP"?"Có thể chọn nhiều biển số (tối đa 10) hoặc để trống và dùng thẻ VIP.":usesUhf?"Dịch vụ dùng đầu đọc UHF: tìm xe theo biển số hoặc mã thẻ RFID dán trên xe.":"Chọn một xe phù hợp dịch vụ hoặc khai báo xe không có biển số."}>
       {value.type==="Thuê bao tháng"&&value.noPlate&&<p className="sr-hint">Xe không có biển số (đã chọn ở phần Dịch vụ áp dụng).</p>}
       <fieldset disabled={!servicesReady} className="sr-vehicle-picker">
         {value.type==="VIP"?<><RelationChoices label="Biển số VIP" value={value.vehicleIds} max={10} options={vehicleOptions} onChange={vehicleIds=>onChange({vehicleIds})}/>{!!value.vehicleIds.length&&<div className="sr-selected-plates">{value.vehicleIds.map(id=><span key={id}>{directory.vehicles.find(v=>v.id===id)?.plate}<Button variant="ghost" aria-label={`Bỏ biển số ${directory.vehicles.find(v=>v.id===id)?.plate}`} onClick={()=>onChange({vehicleIds:value.vehicleIds.filter(v=>v!==id)})}><X size={12}/></Button></span>)}</div>}</>:
           value.noPlate?<Field label="Loại phương tiện" required><Select aria-label="Loại phương tiện không biển số" value={value.energy||""} onChange={e=>onChange({energy:e.target.value})} options={[{value:"",label:"Chọn loại phương tiện"},...vehicleVariantOptions(value.vehicle).filter(o=>selectedServices.every(s=>!s.energy||s.energy===o.value))]}/></Field>:
-          <EntityPicker label="Xe của thuê bao" required disabled={!servicesReady} value={value.vehicleIds[0]||""} onChange={id=>onChange({vehicleIds:id?[id]:[]})} options={vehicleOptions}/>
+          <EntityPicker label="Xe của thuê bao" required disabled={!servicesReady} placeholder={usesUhf?"Tìm biển số, mã thẻ RFID hoặc mã xe…":undefined} value={value.vehicleIds[0]||""} onChange={id=>onChange({vehicleIds:id?[id]:[]})} options={vehicleOptions}/>
         }
         {!value.noPlate&&<Button className="sm-inline-add" disabled={!servicesReady||value.type==="VIP"&&value.vehicleIds.length>=10} onClick={onCreateVehicle}><Plus size={13}/>Tạo xe mới</Button>}
       </fieldset>
+      {usesUhf&&rfidVehicle&&<p className="sr-hint sr-rfid" role="status">Thẻ UHF: <strong>{rfidVehicle.rfid}</strong> · gắn với xe {rfidVehicle.plate}. Đầu đọc UHF quét mã này để nhận diện xe.</p>}
+      {usesUhf&&!value.noPlate&&pickedVehicle&&!rfidVehicle&&<div className={uhfRequired?"sm-warning":"sr-hint"} role="status">Xe {pickedVehicle.plate} chưa khai báo mã thẻ RFID.{uhfRequired?" Dịch vụ yêu cầu thẻ UHF nên cần bổ sung trước khi lưu. ":" Thuê bao vẫn dùng được các hình thức khác của dịch vụ. "}{onEditVehicle&&<Button variant="link" onClick={()=>onEditVehicle(pickedVehicle.id)}>Bổ sung mã thẻ RFID cho {pickedVehicle.plate}</Button>}</div>}
+      {uhfRequired&&value.noPlate&&<p className="sm-warning" role="status">Dịch vụ yêu cầu thẻ UHF. Mã thẻ RFID gắn với hồ sơ xe nên xe không có biển số không dùng được dịch vụ này.</p>}
       {!servicesReady&&<p className="sr-hint">Chọn dịch vụ để xem các xe phù hợp.</p>}
       {servicesReady&&!value.noPlate&&<p className="sr-hint">Chỉ hiện xe {value.vehicle.toLocaleLowerCase("vi")} phù hợp dịch vụ đã chọn. Xe loại khác ({["Ô tô","Xe máy","Xe đạp"].filter(v=>v!==value.vehicle).map(v=>v.toLocaleLowerCase("vi")).join(", ")}) cần đăng ký thuê bao riêng với dịch vụ của loại xe đó.</p>}
       {value.type==="VIP"&&!value.vehicleIds.length&&<p className={noPlateServiceConflict?"sm-warning":"sr-hint"} role="status">{noPlateServiceConflict?"Dịch vụ bắt buộc biển số: chọn ít nhất một biển số hoặc đổi dịch vụ.":"Không đăng ký biển số: sử dụng thẻ VIP để nhận diện tại các bãi đang áp dụng."}</p>}

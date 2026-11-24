@@ -7,7 +7,7 @@ export const energyKinds = [
 export type EnergyKind = typeof energyKinds[number]
 export const energyOptions = (vehicle: string) =>
   vehicle === "Xe đạp" ? ["Không động cơ", "Điện"] : ["Xăng/dầu", "Điện"]
-/** Stocked card technologies. UHF tags are stuck on vehicles and registered per subscription, never stocked. */
+/** Stocked card technologies. UHF tags are stuck on vehicles and declared as the vehicle's RFID code, never stocked. */
 export const cardTechnologies = [
   "Thẻ Mifare",
   "Thẻ Proximity",

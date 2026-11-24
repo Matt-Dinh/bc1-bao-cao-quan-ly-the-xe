@@ -125,6 +125,8 @@ export interface ManagedCustomer extends ManagedAudit {
   note: string
 }
 export interface ManagedVehicle extends ManagedAudit {
+  /** EPC of the UHF tag stuck on this vehicle ("Mã thẻ RFID"). Read by UHF gates; never stocked. */
+  rfid?: string
   useVoucher?: boolean
   energy?: string
   id: string
@@ -159,13 +161,7 @@ export interface SubscriptionLot {
   serviceId: string
   active: boolean
 }
-/** UHF tag stuck on the vehicle: registered with the subscription, never stocked or recalled. */
-export interface UhfTag {
-  code: string
-  label?: string
-}
 export interface SubscriberProfile {
-  uhf?: UhfTag
   energy?: string
   id: string
   estate: string
@@ -186,8 +182,6 @@ export interface SubscriptionDirectory {
   profiles: SubscriberProfile[]
 }
 export interface SubscriberInput extends SubscriberProfile {
-  uhfCode?: string
-  uhfLabel?: string
   cardId?: string
   cardParkId?: string
   cardReason?: string
@@ -245,6 +239,11 @@ export const profileUsesUhf = (
 ) =>
   profile.lots.some((lot) => lot.active &&
     controlUsesUhf(directory.services.find((s) => s.id === lot.serviceId)?.control || "Không"))
+/** UHF identifies a subscription through the RFID tag declared on its vehicle (one vehicle per monthly subscription). */
+export const profileRfidVehicle = (directory: SubscriptionDirectory, profile: Pick<SubscriberProfile, "vehicleIds" | "noPlate">) =>
+  profile.noPlate ? undefined : directory.vehicles.find((v) => profile.vehicleIds.includes(v.id) && !!v.rfid)
+export const profileHasUhf = (directory: SubscriptionDirectory, profile: Pick<SubscriberProfile, "vehicleIds" | "noPlate">) =>
+  !!profileRfidVehicle(directory, profile)
 const availableControlBranches = (mode: string, profile: SubscriberProfile) =>
   mode
     .split(" hoặc ")
@@ -301,12 +300,12 @@ export function registrationControlError(state: OperationState, input: Subscribe
     if(!service)continue
     const branches=availableControlBranches(service.control,profile)
     if(!branches.length)continue // Plate-only modes are rejected by saveSubscriber.
-    const uhf=!!(input.uhfCode?.trim()||(input.uhfCode===undefined&&directory.profiles.find(p=>p.id===input.id)?.uhf))
+    const uhf=profileHasUhf(directory,profile)
     const usable=branches.some(b=>(!b.includes("Biển số")||plate)&&(!branchUsesCard(b)||!!card)&&(!branchUsesUhf(b)||uhf)&&(!b.includes("Khuôn mặt")||face))
-    if(!usable && branches.every(branchUsesUhf) && !uhf) return `Dịch vụ “${service.name}” yêu cầu thẻ UHF. Nhập mã thẻ UHF dán trên xe.`
+    if(!usable && branches.every(branchUsesUhf) && !uhf) return `Dịch vụ “${service.name}” yêu cầu thẻ UHF. Chọn xe đã khai báo mã thẻ RFID hoặc bổ sung mã thẻ RFID trong hồ sơ xe.`
     if(!usable) return branches.every(b=>b.includes("Khuôn mặt"))&&!face
       ? `Dịch vụ “${service.name}” yêu cầu khuôn mặt của chủ thuê bao. Bổ sung ảnh khuôn mặt trong hồ sơ chủ thuê bao trước khi lưu.`
-      : `Chưa đáp ứng chế độ kiểm soát của dịch vụ “${service.name}”. Chọn thẻ Proximity/Mifare, nhập mã thẻ UHF hoặc bổ sung khuôn mặt theo chế độ đã chọn.`
+      : `Chưa đáp ứng chế độ kiểm soát của dịch vụ “${service.name}”. Chọn thẻ Proximity/Mifare, chọn xe có mã thẻ RFID hoặc bổ sung khuôn mặt theo chế độ đã chọn.`
   }
   return null
 }
@@ -405,7 +404,7 @@ export function subscriptionIdentificationMissing(
     !profile ||
     !requiresPlateFreeControl(profile) ||
     profile.status === "Đã hủy" ||
-    profile.uhf ||
+    profileHasUhf(directory, profile) ||
     assignedCard(state, id)
   )
     return false
@@ -672,8 +671,6 @@ export const subscriberInput = (
         members: [...profile.members],
         vehicleIds: [...profile.vehicleIds],
         lots: profile.lots.map((lot) => ({ ...lot })),
-        uhfCode: profile.uhf?.code ?? "",
-        uhfLabel: profile.uhf?.label ?? "",
         type: sub.type as SubscriberInput["type"],
         group: sub.type === "VIP" ? "" : customerSubscriptionGroup(directoryOf(state).customers.find(customer=>customer.id===profile.customerId)),
         contract: sub.contract,
@@ -868,15 +865,30 @@ export function saveManagedVehicle(
     )
   )
     fail("Biển số đã tồn tại trong khu đô thị.")
+  // RFID (UHF tag) belongs to the vehicle: unique across every estate and never a stocked card code.
+  const rfid = (input.rfid || "").replace(/\s/g, "").toUpperCase() || undefined
+  if (rfid) {
+    if (!/^[A-Z0-9]{1,50}$/.test(rfid))
+      fail("Mã thẻ RFID gồm chữ và số, tối đa 50 ký tự.")
+    const holder = directory.vehicles.find((row) => row.id !== input.id && row.rfid && normalize(row.rfid) === normalize(rfid))
+    if (holder) fail(`Mã thẻ RFID đã gắn với xe ${holder.plate} (${holder.id}).`)
+    if (state.cards.some((card) => normalize(card.id) === normalize(rfid)))
+      fail("Mã thẻ RFID trùng với mã thẻ đang quản lý trong kho.")
+  }
   const profiles = directory.profiles.filter(
     (row) => row.vehicleIds.includes(input.id) && row.status !== "Đã hủy",
   )
   const candidateDirectory = {
     ...directory,
     vehicles: directory.vehicles.map((row) =>
-      row.id === old?.id ? { ...input, energy } : row,
+      row.id === old?.id ? { ...input, energy, rfid } : row,
     ),
   }
+  const uhfHolder = old?.rfid && !rfid
+    ? profiles.find((profile) => profileRequiresUhf(candidateDirectory, profile))
+    : undefined
+  if (uhfHolder)
+    fail(`Xe đang thuộc thuê bao ${uhfHolder.id} dùng dịch vụ bắt buộc thẻ UHF. Đổi dịch vụ của thuê bao trước khi xóa mã thẻ RFID.`)
   if (
     profiles.some((profile) =>
       profile.lots.some((lot) => {
@@ -901,6 +913,7 @@ export function saveManagedVehicle(
     useVoucher: old?.useVoucher ?? false,
     id: old?.id || newId("XE", directory.vehicles),
     energy,
+    rfid,
     plate: input.plate.trim().toUpperCase(),
   }
   let next = {
@@ -1272,11 +1285,6 @@ export function saveSubscriber(
     lots: input.lots.map((lot) => ({ ...lot })),
     status: oldProfile?.status ?? "Đang hoạt động",
     note: input.note.trim(),
-    uhf: input.uhfCode === undefined
-      ? oldProfile?.uhf
-      : input.uhfCode.trim()
-        ? { code: input.uhfCode.trim(), label: input.uhfLabel?.trim() || undefined }
-        : undefined,
   }
   const record: Subscription = {
     id,
@@ -1424,7 +1432,7 @@ export function issueSubscriberCard(
       "Chọn thẻ Trong kho đúng bãi, đúng loại thuê bao và loại phương tiện, chưa gắn thuê bao khác.",
     )
   if (card.technology === "Thẻ UHF")
-    fail("Thẻ UHF dán trên xe không cấp từ kho. Nhập mã thẻ UHF trong form đăng ký thuê bao.")
+    fail("Thẻ UHF dán trên xe không cấp từ kho. Khai báo mã thẻ RFID trong hồ sơ xe.")
   const next = {
     ...state,
     cards: state.cards.map((row) =>
@@ -1469,18 +1477,10 @@ export function saveSubscriberRegistration(
     )
   if (current && input.cardId && input.cardId !== current.id)
     fail("Thu hồi thẻ đang lưu hành trước khi đổi sang thẻ khác.")
-  const uhfCode = profileUsesUhf(directory, input) ? input.uhfCode?.trim() ?? directory.profiles.find((p) => p.id === input.id)?.uhf?.code ?? "" : ""
-  if (profileRequiresUhf(directory, input) && !uhfCode)
-    fail("Dịch vụ yêu cầu thẻ UHF. Nhập mã thẻ UHF dán trên xe.")
-  if (uhfCode) {
-    if (!/^\S{1,50}$/.test(uhfCode))
-      fail("Mã thẻ UHF tối đa 50 ký tự, không có khoảng trắng.")
-    const owner = directory.profiles.find((p) => p.id !== input.id && p.status !== "Đã hủy" && p.uhf && normalize(p.uhf.code) === normalize(uhfCode))
-    if (owner) fail(`Mã thẻ UHF đã được đăng ký cho thuê bao ${owner.id}.`)
-    if (state.cards.some((c) => normalize(c.id) === normalize(uhfCode)))
-      fail("Mã thẻ UHF trùng với mã thẻ đang quản lý trong kho.")
-  }
-  input = { ...input, uhfCode, uhfLabel: uhfCode ? input.uhfLabel : "" }
+  if (profileRequiresUhf(directory, input) && !profileHasUhf(directory, input))
+    fail(input.noPlate
+      ? "Dịch vụ yêu cầu thẻ UHF. Mã thẻ RFID gắn với hồ sơ xe nên xe không có biển số không dùng được dịch vụ này."
+      : "Dịch vụ yêu cầu thẻ UHF. Chọn xe đã khai báo mã thẻ RFID hoặc bổ sung mã thẻ RFID trong hồ sơ xe.")
   if (!input.id && input.to && input.to < today)
     fail("Ngày hết hiệu lực của thuê bao mới không được ở quá khứ.")
   let next = saveSubscriber(state, input)

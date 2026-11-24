@@ -42,6 +42,7 @@ const {
   registrationControlError,
   controlRequiresUhf,
   profileUsesCard,
+  profileRfidVehicle,
 } = require("/tmp/vparking-model-tests/subscription-model.js")
 test("cross-screen links preserve complete service and entity identifiers containing colons", () => {
   assert.deepEqual(parseManagementRelation("service:DV-A:0-0"), { kind: "service", id: "DV-A:0-0" })
@@ -745,7 +746,7 @@ test("registration requires a card only when every control alternative requires 
   state=saveManagedService(state,{...service,control:"UHF hoặc (Biển số và Khuôn mặt)"})
   assert.equal(subscriberRequiresCard(directoryOf(state),noPlate),false)
   assert.throws(()=>saveSubscriberRegistration(state,noPlate),/UHF/)
-  assert.doesNotThrow(()=>saveSubscriberRegistration(state,{...noPlate,uhfCode:"E2000017221101441890ABCD"}))
+  assert.throws(()=>saveSubscriberRegistration(state,noPlate),/xe không có biển số/)
 })
 
 test("saving registration allocates stock and updates card/subscriber links in one transaction",()=>{
@@ -764,6 +765,7 @@ test("saving registration allocates stock and updates card/subscriber links in o
   }
 })
 
+const withRfid=(state,id,rfid)=>saveManagedVehicle(state,{...directoryOf(state).vehicles.find(v=>v.id===id),rfid})
 test("card registration validates exact parking, vehicle category, subscription kind and rejects UHF stock",()=>{
   let {state,input,service}=setup(),card=stockCard(state)
   assert.equal(subscriptionCardFits(state,input,card,"A:0"),true)
@@ -773,27 +775,38 @@ test("card registration validates exact parking, vehicle category, subscription 
   assert.throws(()=>saveSubscriberRegistration(uhfStock,{...input,cardId:card.id,cardParkId:"A:0"}))
   state=saveManagedService(state,{...service,control:"Biển số và Thẻ UHF"})
   assert.throws(()=>saveSubscriberRegistration(state,input),/yêu cầu thẻ UHF/)
-  const saved=saveSubscriberRegistration(state,{...input,uhfCode:"E28011606000020A",uhfLabel:"UHF-0001"})
+  // The RFID tag is declared on the vehicle; the subscription only picks that vehicle.
+  state=withRfid(state,input.vehicleIds[0],"e2801160 6000020a")
+  assert.equal(directoryOf(state).vehicles.find(v=>v.id===input.vehicleIds[0]).rfid,"E28011606000020A")
+  const saved=saveSubscriberRegistration(state,input)
   const profile=directoryOf(saved).profiles.find(p=>p.id===saved.subscriptions[0].id)
-  assert.deepEqual(profile.uhf,{code:"E28011606000020A",label:"UHF-0001"})
+  assert.equal(profileRfidVehicle(directoryOf(saved),profile).rfid,"E28011606000020A")
+  assert.equal("uhf" in profile,false)
   assert.equal(saved.subscriptions[0].cardId,"")
   assert.equal(saved.cards.length,state.cards.length)
-  assert.equal(subscriberInput(saved,profile.id).uhfCode,"E28011606000020A")
+  // A vehicle held by a UHF-only subscription keeps its RFID until the package changes.
+  const vehicle=directoryOf(saved).vehicles.find(v=>v.id===input.vehicleIds[0])
+  assert.throws(()=>saveManagedVehicle(saved,{...vehicle,rfid:""}),/bắt buộc thẻ UHF/)
+  assert.doesNotThrow(()=>saveManagedVehicle(saved,{...vehicle,rfid:"E28011606000020B"}))
 })
 
-test("UHF tags are unique, never come from stock and force a monthly subscription",()=>{
+test("RFID codes live on the vehicle, are unique, never come from stock and force a monthly subscription",()=>{
   let {state,input,service}=setup()
+  const car=input.vehicleIds[0]
+  const newCar={id:"",estate:"A",plate:"30A-999.92",energy:"Xăng/dầu",vehicle:"Ô tô",brand:"Kia",color:"",active:true,note:""}
+  assert.throws(()=>withRfid(state,car,"E2-80"),/chữ và số/)
+  const stockLike={...state,cards:state.cards.map((c,i)=>i===0?{...c,id:"E200CARD1"}:c)}
+  assert.throws(()=>withRfid(stockLike,car,"e200card1"),/trùng với mã thẻ/)
+  state=withRfid(state,car,"E200AAA1")
+  assert.throws(()=>saveManagedVehicle(state,{...newCar,rfid:"e200aaa1"}),/đã gắn với xe/)
   state=saveManagedService(state,{...service,control:"UHF"})
-  assert.throws(()=>saveSubscriberRegistration(state,{...input,uhfCode:"E2 80"}),/khoảng trắng/)
-  assert.throws(()=>saveSubscriberRegistration(state,{...input,uhfCode:stockCard(state).id}),/trùng với mã thẻ/)
-  const first=saveSubscriberRegistration(state,{...input,uhfCode:"E200AAA1"})
-  const id=first.subscriptions[0].id
-  let next=saveManagedVehicle(first,{id:"",estate:"A",plate:"30A-999.92",energy:"Xăng/dầu",vehicle:"Ô tô",brand:"Kia",color:"",active:true,note:""})
+  const first=saveSubscriberRegistration(state,input)
+  const next=saveManagedVehicle(first,newCar)
   const other=next.directory.vehicles[0].id
-  assert.throws(()=>saveSubscriberRegistration(next,{...input,vehicleIds:[other],uhfCode:"e200aaa1"}),new RegExp(`đã được đăng ký cho thuê bao ${id}`))
-  assert.doesNotThrow(()=>saveSubscriberRegistration(next,{...subscriberInput(next,id),note:"Giữ mã UHF cũ"}))
+  assert.throws(()=>saveSubscriberRegistration(next,{...input,vehicleIds:[other]}),/mã thẻ RFID/)
+  assert.doesNotThrow(()=>saveSubscriberRegistration(next,{...subscriberInput(next,first.subscriptions[0].id),note:"Giữ mã RFID của xe"}))
   assert.equal(registrationForCard(state,{...input,type:"VIP",anyPlate:true}).type,"Thuê bao tháng")
-  assert.throws(()=>saveSubscriberRegistration(state,{...input,uhfCode:"E200AAA2",cardId:stockCard(state,"VIP").id,cardParkId:"A:0"}))
+  assert.throws(()=>saveSubscriberRegistration(state,{...input,cardId:stockCard(state,"VIP").id,cardParkId:"A:0"}))
 })
 
 test("one subscription can hold a Mifare card and a UHF tag across its parking services",()=>{
@@ -803,12 +816,13 @@ test("one subscription can hold a Mifare card and a UHF tag across its parking s
   state=saveManagedService(state,{...service,control:"Biển số và Thẻ"})
   const both={...input,lots:[{parkId:"A:0",serviceId:service.id,active:true},{parkId:"A:1",serviceId:uhfService.id,active:true}]}
   const card=stockCard(state)
-  assert.throws(()=>saveSubscriberRegistration(state,{...both,uhfCode:"E200BBB1"}),/Proximity\/Mifare/)
   assert.throws(()=>saveSubscriberRegistration(state,{...both,cardId:card.id,cardParkId:"A:0"}),/UHF/)
-  const saved=saveSubscriberRegistration(state,{...both,cardId:card.id,cardParkId:"A:0",uhfCode:"E200BBB1"})
+  state=withRfid(state,input.vehicleIds[0],"E200BBB1")
+  assert.throws(()=>saveSubscriberRegistration(state,both),/Proximity\/Mifare/)
+  const saved=saveSubscriberRegistration(state,{...both,cardId:card.id,cardParkId:"A:0"})
   const sub=saved.subscriptions[0]
   assert.equal(sub.cardId,card.id)
-  assert.equal(directoryOf(saved).profiles.find(p=>p.id===sub.id).uhf.code,"E200BBB1")
+  assert.equal(profileRfidVehicle(directoryOf(saved),directoryOf(saved).profiles.find(p=>p.id===sub.id)).rfid,"E200BBB1")
   assert.equal(saved.cards.find(c=>c.id===card.id).technology==="Thẻ UHF",false)
 })
 test("future registrations can allocate a physical card while retaining a future effective date",()=>{
@@ -923,7 +937,7 @@ test("face requirements and alternative identification branches are validated be
   const withFace=saveManagedCustomer(state,{...owner,faces:[{angle:'CENTER',src:'data:image/png;base64,iVBORw0KGgo='}]})
   assert.doesNotThrow(()=>saveSubscriberRegistration(withFace,input))
   state=saveManagedService(state,{...service,control:'(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)'})
-  assert.match(registrationControlError(state,input),/Chọn thẻ Proximity\/Mifare, nhập mã thẻ UHF hoặc bổ sung khuôn mặt/)
+  assert.match(registrationControlError(state,input),/Chọn thẻ Proximity\/Mifare, chọn xe có mã thẻ RFID hoặc bổ sung khuôn mặt/)
   assert.doesNotThrow(()=>saveSubscriberRegistration(state,{...input,cardId:stockCard(state,'VIP').id,cardParkId:'A:0'}))
   const withAlternativeFace=saveManagedCustomer(state,{...owner,faces:[{angle:'CENTER',src:'data:image/png;base64,iVBORw0KGgo='}]})
   assert.doesNotThrow(()=>saveSubscriberRegistration(withAlternativeFace,input))

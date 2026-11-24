@@ -65,6 +65,8 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     carUhfFace: service("Ô tô UHF + khuôn mặt", "Ô tô", "UHF và Khuôn mặt", { price: 1400000 }),
     bikeCardOrFace: service("Xe máy thẻ hoặc khuôn mặt", "Xe máy", "(Biển số và Thẻ) hoặc (Biển số và Khuôn mặt)", { price: 140000 }),
     bikePlate: service("Xe máy chỉ biển số", "Xe máy", "Biển số", { price: 100000 }),
+    eventUhf: service("Xe sự kiện UHF + biển số", "Ô tô", "Biển số và Thẻ UHF", { pricing: "Miễn phí", price: 0, note: "Quét tem UHF, đối chiếu biển số gắn với tem với biển số đã đăng ký" }),
+    eventRfid: service("Xe sự kiện chỉ RFID", "Ô tô", "UHF", { pricing: "Miễn phí", price: 0, note: "Xe sự kiện dán tem RFID, đăng ký trước; đầu đọc UHF quét đúng mã là cho qua" }),
     eventPlate: service("Xe sự kiện chỉ biển số", "Ô tô", "Biển số", { pricing: "Miễn phí", price: 0, note: "Xe bus/xe khách phục vụ sự kiện, đăng ký trước biển số" }),
   }
   service("Xe đạp nhận diện khuôn mặt", "Xe đạp", "Khuôn mặt", { price: 50000 })
@@ -130,9 +132,9 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     staff: vehicle("29A-456.78", "Ô tô", "Xăng/dầu", "Toyota", "Bạc"),
     car: vehicle("35A-147.86", "Ô tô", "Xăng/dầu", "Mazda", "Đỏ"),
     moto: vehicle("14B1-478.56", "Xe máy", "Xăng/dầu", "Honda", "Đen"),
-    uhf: vehicle("30H-777.77", "Ô tô", "Xăng/dầu", "Toyota", "Trắng"),
-    both: vehicle("30K-888.88", "Ô tô", "Điện", "VinFast", "Xanh"),
-    bikeUhf: vehicle("29B1-234.56", "Xe máy", "Điện", "VinFast", "Xám"),
+    uhf: vehicle("30H-777.77", "Ô tô", "Xăng/dầu", "Toyota", "Trắng", { rfid: "E28011606000020777" }),
+    both: vehicle("30K-888.88", "Ô tô", "Điện", "VinFast", "Xanh", { rfid: "E28011606000020888" }),
+    bikeUhf: vehicle("29B1-234.56", "Xe máy", "Điện", "VinFast", "Xám", { rfid: "E28011606000023456" }),
     bikeFace: vehicle("29C1-345.67", "Xe máy", "Xăng/dầu", "Yamaha", "Xanh"),
     residentFace: vehicle("30G-246.13", "Ô tô", "Xăng/dầu", "Kia", "Xám"),
     bus1: vehicle("29B-123.45", "Ô tô", "Xăng/dầu", "Hyundai", "Trắng", { note: "Xe bus sự kiện, có dán tem UHF" }),
@@ -145,6 +147,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     longCar2: vehicle("30A-888.02", "Ô tô", "Điện", "VinFast", "Trắng"),
     longCar3: vehicle("30A-888.03", "Ô tô", "Xăng/dầu", "Mercedes-Benz", "Bạc"),
     longMoto: vehicle("29B2-888.04", "Xe máy", "Xăng/dầu", "Honda", "Đỏ"),
+    eventCar: vehicle("30H-999.88", "Ô tô", "Xăng/dầu", "Ford", "Đen", { rfid: "E28011606000029988", note: "Xe sự kiện, có dán tem UHF" }),
     moved: vehicle("30E-111.22", "Ô tô", "Xăng/dầu", "Hyundai", "Bạc", { active: false, note: "Xe đã bán" }),
   }
 
@@ -184,17 +187,19 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   reg({ customerId: c.vipFamily, vehicle: "Ô tô", type: "VIP", to: "", vehicleIds: [v.longCar1, v.longCar2, v.longCar3],
     lots: [lot(PARK.s1, svc.vipFlex), lot(PARK.s2, svc.vipFlex)], cardId: "DM-VIP-03" })
   reg({ customerId: c.vipFamily, vehicle: "Xe máy", type: "VIP", to: "", vehicleIds: [v.longMoto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-VIP-XM-01" })
+  // Event car with an RFID sticker registered in advance: the gate only checks that the RFID code is registered.
+  reg({ customerId: c.eventOrganizer, vehicle: "Ô tô", vehicleIds: [v.eventCar], from: "2026-11-05", to: "2026-11-06", lots: [lot(PARK.s1, svc.eventRfid)] })
   // One customer, a car and a motorbike: two separate subscriptions.
   reg({ customerId: c.twoCars, vehicle: "Ô tô", vehicleIds: [v.car], lots: [lot(PARK.s1, "DV-TB-1")], cardId: "DM-OT-01" })
   reg({ customerId: c.twoCars, vehicle: "Xe máy", vehicleIds: [v.moto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-01" })
   // Bicycle without plate, Mifare card.
   reg({ customerId: c.bike, vehicle: "Xe đạp", noPlate: true, energy: "Không động cơ", lots: [lot(PARK.s1, "DV-TB-3")], cardId: "DM-XD-02" })
   // Car with a UHF tag stuck on the windscreen.
-  reg({ customerId: c.uhf, vehicle: "Ô tô", vehicleIds: [v.uhf], lots: [lot(PARK.s1, svc.uhfPlate), lot(PARK.s2, svc.uhfPlate)], uhfCode: "E28011606000020777", uhfLabel: "UHF-30H77777" })
+  reg({ customerId: c.uhf, vehicle: "Ô tô", vehicleIds: [v.uhf], lots: [lot(PARK.s1, svc.uhfPlate), lot(PARK.s2, svc.uhfPlate)] })
   // Mifare card in B1-S1 plus UHF tag outdoors.
-  reg({ customerId: c.both, vehicle: "Ô tô", vehicleIds: [v.both], lots: [lot(PARK.s1, "DV-TB-1"), lot(PARK.out, svc.uhfOnly)], cardId: "DM-OT-02", uhfCode: "E28011606000020888", uhfLabel: "UHF-30K88888" })
+  reg({ customerId: c.both, vehicle: "Ô tô", vehicleIds: [v.both], lots: [lot(PARK.s1, "DV-TB-1"), lot(PARK.out, svc.uhfOnly)], cardId: "DM-OT-02" })
   // Motorbike: UHF or plate, the tag is optional.
-  reg({ customerId: c.bikeUhf, vehicle: "Xe máy", vehicleIds: [v.bikeUhf], lots: [lot(PARK.s2, svc.bikeUhf)], uhfCode: "E28011606000023456" })
+  reg({ customerId: c.bikeUhf, vehicle: "Xe máy", vehicleIds: [v.bikeUhf], lots: [lot(PARK.s2, svc.bikeUhf)] })
   // Motorbike: plate + card + face.
   reg({ customerId: c.bikeFace, vehicle: "Xe máy", vehicleIds: [v.bikeFace], lots: [lot(PARK.s1, svc.bikeFace)], cardId: "DM-XM-02" })
   // Cancelled subscription of a customer who moved out (vehicle kept for history).

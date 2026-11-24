@@ -43,7 +43,7 @@ test('stock cards are Proximity or Mifare only; UHF tags are registered on the s
   const state=seedOperations()
   const card=state.cards.find(c=>c.status==='Đang hoạt động'&&c.subscription&&c.vehicle==='Ô tô')
   const input=cardEditInput(card)
-  assert.throws(()=>saveCardDetails(state,{...input,technology:'Thẻ UHF'}),/UHF đăng ký trực tiếp trong thuê bao/)
+  assert.throws(()=>saveCardDetails(state,{...input,technology:'Thẻ UHF'}),/UHF khai báo bằng mã thẻ RFID/)
   assert.throws(()=>saveCardDetails(state,{...input,technology:''}),/bỏ trống/)
   assert.doesNotThrow(()=>saveCardDetails(state,{...input,technology:'Thẻ Proximity'}))
   assert.ok(state.cards.every(c=>c.technology!=='Thẻ UHF'))

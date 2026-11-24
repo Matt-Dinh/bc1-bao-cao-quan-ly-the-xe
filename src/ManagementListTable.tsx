@@ -29,7 +29,7 @@ const columns: Record<ManagementScreen, Record<string, string>> = {
     face: "Khuôn mặt", source: "Nguồn", email: "Email", identity: "CCCD", address: "Địa chỉ", note: "Ghi chú", ...auditColumns,
   },
   vehicles: {
-    id: "Mã xe", plate: "Biển số", estate: "Khu đô thị", vehicle: "Loại phương tiện", brand: "Hãng xe",
+    id: "Mã xe", plate: "Biển số", rfid: "Mã thẻ RFID", estate: "Khu đô thị", vehicle: "Loại phương tiện", brand: "Hãng xe",
     color: "Màu xe", status: "Trạng thái", linked: "Số thuê bao", voucher: "Áp dụng voucher", note: "Ghi chú", ...auditColumns,
   },
   services: {
@@ -135,7 +135,7 @@ export default function ManagementListTable({ screen, state, directory, ids, hea
       const vehicle = vehicles.get(id)!
       const data: Record<string, ReactNode> = {
         plate: link(id, vehicle.plate), estate: estateName(vehicle.estate), vehicle: variantLabel(vehicle.vehicle, vehicle.energy),
-        brand: vehicle.brand, color: vehicle.color, voucher: vehicle.useVoucher ? "Có" : "Không", linked: linked("vehicle", id),
+        rfid: vehicle.rfid || "—", brand: vehicle.brand, color: vehicle.color, voucher: vehicle.useVoucher ? "Có" : "Không", linked: linked("vehicle", id),
       }
       return {...common,...data}
     }
