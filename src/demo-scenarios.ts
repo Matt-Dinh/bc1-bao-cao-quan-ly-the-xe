@@ -31,7 +31,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   const lots: [string, string, string, string[]][] = [
     ["PN-DEMO-OTO-TB", "Thuê bao tháng", "Ô tô", ["DM-OT-01", "DM-OT-02", "DM-OT-03", "DM-OT-04"]],
     ["PN-DEMO-OTO-VIP", "VIP", "Ô tô", ["DM-VIP-01", "DM-VIP-02"]],
-    ["PN-DEMO-XM-TB", "Thuê bao tháng", "Xe máy", ["DM-XM-01", "DM-XM-02", "DM-XM-03"]],
+    ["PN-DEMO-XM-TB", "Thuê bao tháng", "Xe máy", ["DM-XM-01", "DM-XM-02", "DM-XM-03", "DM-XM-04"]],
     ["PN-DEMO-XD-TB", "Thuê bao tháng", "Xe đạp", ["DM-XD-01", "DM-XD-02"]],
   ]
   let code = 0
@@ -116,6 +116,8 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     bikeFace: customer("Đỗ Thị Hương", "S2.02-1012", "0901000010", { faces: face }),
     residentFace: customer("Mai Thanh Tùng", "S1.1-1508", "0901000013", { faces: face }),
     eventOrganizer: customer("Công ty Sự kiện Ánh Dương", "S1.1", "0243999888", { apartment: "", group: "Nhà cung cấp dịch vụ", address: "Hà Nội", note: "Đơn vị tổ chức sự kiện" }),
+    carAndMoto: customer("Đinh Công Minh", "S1.2-1212", "0935777888"),
+    shopStaff: customer("Lương Thị Thu", "S1.2", "0912333444", { apartment: "", group: "Gian hàng", note: "Nhân viên gian hàng S1.2-SH03" }),
     moved: customer("Lý Văn Khánh", "S2.03-0313", "0901000012", { active: false, note: "Đã chuyển đi" }),
   }
   const v = {
@@ -132,6 +134,9 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     bus1: vehicle("29B-123.45", "Ô tô", "Xăng/dầu", "Hyundai", "Trắng", { note: "Xe bus sự kiện, có dán tem UHF" }),
     bus2: vehicle("29B-123.46", "Ô tô", "Xăng/dầu", "Hyundai", "Trắng", { note: "Xe bus sự kiện, có dán tem UHF" }),
     bus3: vehicle("29B-123.47", "Ô tô", "Xăng/dầu", "Thaco", "Xanh", { note: "Xe bus sự kiện, có dán tem UHF" }),
+    minhCar: vehicle("30L-135.79", "Ô tô", "Xăng/dầu", "Toyota", "Trắng"),
+    minhMoto: vehicle("29H1-246.80", "Xe máy", "Xăng/dầu", "Honda", "Đen"),
+    shopMoto: vehicle("29K1-357.91", "Xe máy", "Xăng/dầu", "Yamaha", "Đỏ"),
     moved: vehicle("30E-111.22", "Ô tô", "Xăng/dầu", "Hyundai", "Bạc", { active: false, note: "Xe đã bán" }),
   }
 
@@ -159,6 +164,12 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   // Event buses: plate only, one short subscription per bus, no card.
   for (const bus of [v.bus1, v.bus2, v.bus3])
     reg({ customerId: c.eventOrganizer, vehicle: "Ô tô", vehicleIds: [bus], from: "2026-11-05", to: "2026-11-06", note: "Dữ liệu mẫu", lots: [lot(PARK.out, svc.eventPlate)] })
+  // Case 12: a resident with a plate-only car and a card + plate motorbike, two subscriptions.
+  reg({ customerId: c.carAndMoto, vehicle: "Ô tô", vehicleIds: [v.minhCar], lots: [lot(PARK.s1, svc.eventPlate)] })
+  reg({ customerId: c.carAndMoto, vehicle: "Xe máy", vehicleIds: [v.minhMoto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-03" })
+  // Shop employee: motorbike with card + plate, the shop contract is required.
+  reg({ customerId: c.shopStaff, vehicle: "Xe máy", vehicleIds: [v.shopMoto], group: "Gian hàng", contract: "HĐ-GH-S1.2-03", contractEnd: "2027-06-30",
+    lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-04" })
   // One customer, a car and a motorbike: two separate subscriptions.
   reg({ customerId: c.twoCars, vehicle: "Ô tô", vehicleIds: [v.car], lots: [lot(PARK.s1, "DV-TB-1")], cardId: "DM-OT-01" })
   reg({ customerId: c.twoCars, vehicle: "Xe máy", vehicleIds: [v.moto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-01" })
