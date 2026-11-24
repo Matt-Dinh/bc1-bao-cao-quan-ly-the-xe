@@ -25,6 +25,8 @@ test("demo scenarios pass every registration rule and cover each case on the lis
   assert.ok(shop && sub(shop.id).group === "Gian hàng" && sub(shop.id).contract === "HĐ-GH-S1.2-03" && sub(shop.id).cardId === "DM-XM-04", "shop employee")
   const eMoto = demo.find((p) => name(p) === "Hồ Thị Phương")
   assert.ok(eMoto && sub(eMoto.id).cardId === "DM-XM-05" && eMoto.noPlate && eMoto.energy === "Điện" && !eMoto.vehicleIds.length, "electric motorbike without plate")
+  const guard = demo.find((p) => name(p) === "Trần Văn Bảo")
+  assert.ok(guard && guard.vehicle === "Xe máy" && sub(guard.id).group === "CBNV BQL" && !sub(guard.id).cardId && S.profileHasFace(d, guard) && guard.lots.every((l) => d.services.find((s) => s.id === l.serviceId).control === "Biển số và Khuôn mặt"), "security guard: plate + face")
   const long = demo.filter((p) => name(p) === "Võ Hoàng Long")
   assert.deepEqual(long.map((p) => [p.vehicle, p.vehicleIds.length, sub(p.id).type]).sort(), [["Xe máy", 1, "VIP"], ["Ô tô", 3, "VIP"]], "VIP household")
   assert.equal(buses.length, 4, "event buses and the event car: one subscription each")

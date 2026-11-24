@@ -55,6 +55,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     eBike: service("Xe đạp điện không biển", "Xe đạp", "Biển số hoặc Thẻ", { energy: "Điện", price: 80000 }),
     eMotoNoPlate: service("Xe máy điện không biển", "Xe máy", "Biển số hoặc Thẻ", { energy: "Điện", price: 100000 }),
     staffFace: service("Ô tô CBNV khuôn mặt", "Ô tô", "Biển số và Khuôn mặt", { price: 0, pricing: "Miễn phí" }),
+    staffBikeFace: service("Xe máy CBNV khuôn mặt", "Xe máy", "Biển số và Khuôn mặt", { price: 0, pricing: "Miễn phí", note: "CBNV/bảo vệ đi xe máy, nhận diện bằng biển số và khuôn mặt" }),
     residentFace: service("Ô tô cư dân khuôn mặt", "Ô tô", "Biển số và Khuôn mặt", { price: 1200000 }),
     uhfPlate: service("Ô tô UHF dán xe", "Ô tô", "Biển số và Thẻ UHF", { price: 1300000 }),
     uhfOnly: service("Ô tô UHF tự động", "Ô tô", "UHF", { price: 1000000 }),
@@ -121,6 +122,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     residentFace: customer("Mai Thanh Tùng", "S1.1-1508", "0901000013", { faces: face }),
     eventOrganizer: customer("Công ty Sự kiện Ánh Dương", "S1.1", "0243999888", { apartment: "", group: "Nhà cung cấp dịch vụ", address: "Hà Nội", note: "Đơn vị tổ chức sự kiện" }),
     carAndMoto: customer("Đinh Công Minh", "S1.2-1212", "0935777888"),
+    guard: customer("Trần Văn Bảo", "S1.01", "0901000099", { apartment: "", faces: face, group: "CBNV BQL", note: "Nhân viên bảo vệ tòa S1.01" }),
     shopStaff: customer("Lương Thị Thu", "S1.2", "0912333444", { apartment: "", group: "Gian hàng", note: "Nhân viên gian hàng S1.2-SH03" }),
     eMoto: customer("Hồ Thị Phương", "S1.3-1103", "0988555666"),
     vipFamily: customer("Võ Hoàng Long", "S1.5-3001", "0903111999"),
@@ -142,6 +144,7 @@ export function addDemoScenarios(seed: OperationState): OperationState {
     bus3: vehicle("29B-123.47", "Ô tô", "Xăng/dầu", "Thaco", "Xanh", { note: "Xe bus sự kiện, có dán tem UHF" }),
     minhCar: vehicle("30L-135.79", "Ô tô", "Xăng/dầu", "Toyota", "Trắng"),
     minhMoto: vehicle("29H1-246.80", "Xe máy", "Xăng/dầu", "Honda", "Đen"),
+    guardMoto: vehicle("29E1-135.79", "Xe máy", "Xăng/dầu", "Honda", "Đen"),
     shopMoto: vehicle("29K1-357.91", "Xe máy", "Xăng/dầu", "Yamaha", "Đỏ"),
     longCar1: vehicle("30A-888.01", "Ô tô", "Xăng/dầu", "Lexus", "Đen"),
     longCar2: vehicle("30A-888.02", "Ô tô", "Điện", "VinFast", "Trắng"),
@@ -179,6 +182,8 @@ export function addDemoScenarios(seed: OperationState): OperationState {
   reg({ customerId: c.carAndMoto, vehicle: "Ô tô", vehicleIds: [v.minhCar], lots: [lot(PARK.s1, svc.eventPlate)] })
   reg({ customerId: c.carAndMoto, vehicle: "Xe máy", vehicleIds: [v.minhMoto], lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-03" })
   // Shop employee: motorbike with card + plate, the shop contract is required.
+  // Security guard on a motorbike: plate + owner face, no card.
+  reg({ customerId: c.guard, vehicle: "Xe máy", vehicleIds: [v.guardMoto], group: "CBNV BQL", lots: [lot(PARK.s1, svc.staffBikeFace)] })
   reg({ customerId: c.shopStaff, vehicle: "Xe máy", vehicleIds: [v.shopMoto], group: "Gian hàng", contract: "HĐ-GH-S1.2-03", contractEnd: "2027-06-30",
     lots: [lot(PARK.s1, "DV-TB-2")], cardId: "DM-XM-04" })
   // Resident electric motorbike without a plate: identified by the card only.
