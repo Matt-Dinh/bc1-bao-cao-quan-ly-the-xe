@@ -4,6 +4,7 @@ import { cardTypes, customerGroups, date, estates, maxDate, today, vehicles } fr
 import ReportPeriodFields from "./ReportPeriodFields"
 import CardLookupStatusFilter from "./CardLookupStatusFilter"
 import CardLookupMultiFilter from "./CardLookupMultiFilter"
+import { cardTechnologies, unknownTechnology } from "./vehicle-energy"
 import {
   lookupAlerts,
   defaultCardLookupFilters,
@@ -81,7 +82,7 @@ export default function CardLookupFilterPanel({
       <div className="filter-grid lookup-filter-primary">
         <Field label="Tìm thẻ">
           <Input type="search" aria-label="Tìm thẻ" maxLength={100}
-            placeholder="Mã thẻ, chủ thẻ, biển số, mã thuê bao…"
+            placeholder="Mã thẻ, mã hai mặt, chủ thẻ, biển số…"
             value={draft.keyword} onChange={(event) => update({ keyword: event.target.value })} />
         </Field>
         <CardLookupMultiFilter label="Loại biến động" value={movements ? draft.movement.length ? draft.movement : [...movementKinds] : []}
@@ -107,6 +108,7 @@ export default function CardLookupFilterPanel({
       </div>
       <div className="filter-grid lookup-filter-row">
         <CardLookupStatusFilter value={draft.statuses} onChange={(statuses) => update({ statuses })} />
+        {selectFilter("Kiểu thẻ", draft.technology || [], (technology) => update({ technology }), "Tất cả kiểu thẻ", [...cardTechnologies, unknownTechnology])}
         <CardLookupMultiFilter label="Nhóm thuê bao" value={draft.group} onChange={(group) => update({ group })}
           allLabel="Tất cả nhóm thuê bao" options={customerGroups.map((value) => ({ value, label: value }))}
           note="Nhóm thuê bao áp dụng cho thẻ Thuê bao tháng. VIP và Vãng lai được chọn tại Loại thẻ." />

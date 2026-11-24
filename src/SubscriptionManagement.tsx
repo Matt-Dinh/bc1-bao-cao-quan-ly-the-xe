@@ -1,12 +1,17 @@
+import ManagementListTable from "./ManagementListTable"
+import CardLookupMultiFilter from "./CardLookupMultiFilter"
+import SubscriberRegistration from "./SubscriberRegistration"
+import { updateRegistrationDraft } from "./subscription-model"
+import { EntityPicker, RelationChoices } from "./ManagementPickers"
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowLeft,
   ArrowRight,
   CarFront,
   Check,
-  Copy,
   CreditCard,
   FileText,
+  ListFilter,
   Pencil,
   Plus,
   Search,
@@ -38,16 +43,23 @@ import type { OperationState } from "./operations-model"
 import { lookupCardStatus } from "./report-model"
 import {
   changeSubscriberState,
+  customerSubscriptionGroup,
   controlModes,
   defaultControlMode,
   directoryOf,
   issueSubscriberCard,
   managementParks,
+  managementUnits,
+  vehicleBrands,
   parseManagementRelation,
   saveManagedCustomer,
   saveManagedService,
   saveManagedVehicle,
-  saveSubscriber,
+  saveSubscriberRegistration,
+  subscriberRequiresCard,
+  subscriptionCardFits,
+  serviceMatchesScope,
+  profileUsesCard,
   subscriberCards,
   subscriberInput,
   subscriptionStates,
@@ -61,7 +73,18 @@ import type {
   SubscriptionState,
 } from "./subscription-model"
 import "./subscription-management.css"
-
+import CustomerFaces from "./CustomerFaces"
+import { vehicleVariantLabel, vehicleChoiceOptions, matchesVehicleChoices } from "./vehicle-energy"
+import {
+  controlRequiresPlate,
+  issuanceStates,
+  plateFreeControlMessage,
+  requiresPlateFreeControl,
+  subscriberEnergies,
+  subscriptionCardState,
+  subscriptionIdentificationMissing,
+  subscriptionPlateControlConflict,
+} from "./subscription-model"
 type Editor = { kind: "customer"; value: ManagedCustomer } | {
   kind: "vehicle"
   value: ManagedVehicle
@@ -90,7 +113,7 @@ const descriptions = {
   vehicles:
     "Thông tin phương tiện dùng chung cho thuê bao tháng và danh sách biển số VIP.",
   services:
-    "Gói dịch vụ theo từng bãi, loại phương tiện, chế độ kiểm soát và cách tính giá.",
+    "Quản lý dịch vụ theo bãi xe, loại phương tiện và chế độ kiểm soát để đăng ký thuê bao.",
 }
 const groupTitles = {
   subscriptions: "Quản lý thuê bao",
@@ -102,10 +125,34 @@ const estateOptions = estates.map((estate) => ({
   value: estate.id,
   label: estate.name,
 }))
+const emptyExtraFilters = {
+  unit: [] as string[],
+  face: [] as string[],
+  source: [] as string[],
+  group: [] as string[],
+  brand: [] as string[],
+  voucher: [] as string[],
+}
+/** Multi-select filter: no choice means every value; otherwise match any chosen value. */
+const anyOf = (chosen: readonly string[], value: string) =>
+  !chosen.length || chosen.includes(value)
+const emptyFilters = {
+  search: "",
+  estate: [] as string[],
+  status: [] as string[],
+  kind: [] as string[],
+  vehicleChoices: [] as string[],
+  issuance: [] as string[],
+  park: [] as string[],
+  ...emptyExtraFilters,
+}
 const emptyCustomer = (estate = ""): ManagedCustomer => ({
   id: "",
   estate,
   name: "",
+  group: "Chưa phân nhóm",
+  unitId: "",
+  block: "",
   phone: "",
   email: "",
   identity: "",
@@ -116,6 +163,7 @@ const emptyCustomer = (estate = ""): ManagedCustomer => ({
   note: "",
 })
 const emptyVehicle = (estate = "", vehicle = "Ô tô"): ManagedVehicle => ({
+  energy: "",
   id: "",
   estate,
   plate: "",
@@ -126,19 +174,20 @@ const emptyVehicle = (estate = "", vehicle = "Ô tô"): ManagedVehicle => ({
   note: "",
 })
 const emptyService = (): ManagedService => ({
+  energy: "",
   id: "",
+  parkIds: [],
   name: "",
   vehicle: "Ô tô",
   category: "Thuê bao",
   control: defaultControlMode,
   pricing: "Theo tháng",
   price: 0,
-  validFrom: today,
-  validTo: "",
   active: true,
   note: "",
 })
 const emptySubscriber = (): SubscriberInput => ({
+  energy: "",
   id: "",
   estate: "",
   customerId: "",
@@ -147,7 +196,7 @@ const emptySubscriber = (): SubscriberInput => ({
   vehicle: "Ô tô",
   noPlate: false,
   anyPlate: false,
-  lots: [{ parkId: "", serviceId: "", active: true }],
+  lots: [],
   status: "Đang hoạt động",
   type: "Thuê bao tháng",
   group: "",
@@ -165,119 +214,36 @@ const tone = (status: string) =>
       : status === "Hết hạn"
         ? "amber"
         : "neutral"
-
-function EntityPicker({
-  label,
-  value,
-  onChange,
-  options,
-  required = false,
+function AuditInformation({
+  record,
 }: {
-  label: string
-  value: string
-  onChange: (id: string) => void
-  options: { value: string; label: string }[]
-  required?: boolean
+  record: {
+    createdAt?: string
+    createdBy?: string
+    updatedAt?: string
+    updatedBy?: string
+  }
 }) {
-  const [query, setQuery] = useState("")
-  const matching = options
-    .filter((option) => normalize(option.label).includes(normalize(query)))
-    .slice(0, 60)
-  const selected = options.find((option) => option.value === value)
-  const visible =
-    selected && !matching.some((option) => option.value === value)
-      ? [selected, ...matching]
-      : matching
+  const format = (v?: string) =>
+    v
+      ? new Date(v).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+      : "Chưa ghi nhận"
   return (
-    <Field label={label} required={required}>
-      <Input
-        type="search"
-        aria-label={`Tìm ${label.toLocaleLowerCase("vi")}`}
-        placeholder="Tìm theo tên, mã hoặc số điện thoại…"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
-      <Select
-        aria-label={label}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        options={[
-          { value: "", label: `Chọn ${label.toLocaleLowerCase("vi")}` },
-          ...visible,
-        ]}
-      />
-    </Field>
-  )
-}
-function RelationChoices({
-  label,
-  value,
-  options,
-  onChange,
-  max = 100,
-}: {
-  label: string
-  value: string[]
-  options: { value: string; label: string }[]
-  onChange: (ids: string[]) => void
-  max?: number
-}) {
-  const [query, setQuery] = useState("")
-  const visible = options
-    .filter(
-      (option) =>
-        value.includes(option.value) ||
-        normalize(option.label).includes(normalize(query)),
-    )
-    .sort(
-      (a, b) =>
-        Number(value.includes(b.value)) - Number(value.includes(a.value)),
-    )
-    .slice(0, 20)
-  return (
-    <div className="sm-relations">
-      <div className="sm-section-label">
-        <strong>{label}</strong>
-        <span>{value.length} đã chọn</span>
-      </div>
-      <Input
-        type="search"
-        aria-label={`Tìm ${label.toLocaleLowerCase("vi")}`}
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Nhập tên hoặc mã để tìm…"
-      />
-      <div className="sm-choice-list">
-        {visible.map((option) => (
-          <label key={option.value}>
-            <input
-              type="checkbox"
-              checked={value.includes(option.value)}
-              disabled={!value.includes(option.value) && value.length >= max}
-              onChange={(event) =>
-                onChange(
-                  event.target.checked
-                    ? [...value, option.value]
-                    : value.filter((id) => id !== option.value),
-                )
-              }
-            />
-            {option.label}
-          </label>
-        ))}
-        {!visible.length && (
-          <span className="muted">Chưa có dữ liệu phù hợp.</span>
-        )}
-      </div>
-      {options.length > 20 && (
-        <small className="muted">
-          Hiện tối đa 20 kết quả; nhập từ khóa để tìm thêm.
-        </small>
-      )}
+    <div className="sm-detail-grid sm-audit">
+      {[
+        ["Người tạo", record.createdBy],
+        ["Ngày tạo", format(record.createdAt)],
+        ["Người cập nhật", record.updatedBy],
+        ["Cập nhật cuối", format(record.updatedAt)],
+      ].map(([label, value]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{value || "Chưa ghi nhận"}</strong>
+        </div>
+      ))}
     </div>
   )
 }
-
 export default function SubscriptionManagement({
   screen,
   state,
@@ -300,6 +266,7 @@ export default function SubscriptionManagement({
   onFocused: () => void
 }) {
   const directory = useMemo(() => directoryOf(state), [state])
+  const [customerFaceBusy, setCustomerFaceBusy] = useState(false)
   const customers = useMemo(
     () => new Map(directory.customers.map((row) => [row.id, row])),
     [directory],
@@ -321,11 +288,26 @@ export default function SubscriptionManagement({
     [state.cards, state.subscriptions],
   )
   const [search, setSearch] = useState("")
-  const [estate, setEstate] = useState("")
-  const [status, setStatus] = useState("")
-  const [kind, setKind] = useState("")
-  const [vehicle, setVehicle] = useState("")
-  const [park, setPark] = useState("")
+  const [estate, setEstate] = useState<string[]>([])
+  const [status, setStatus] = useState<string[]>([])
+  const [kind, setKind] = useState<string[]>([])
+  const [vehicleChoices, setVehicleChoices] = useState<string[]>([])
+  const [issuance, setIssuance] = useState<string[]>([])
+  const [park, setPark] = useState<string[]>([])
+  const [extraFilters, setExtraFilters] = useState(emptyExtraFilters)
+  const [appliedFilters, setAppliedFilters] = useState(emptyFilters)
+  const draftFilters = {
+    search,
+    estate,
+    status,
+    kind,
+    vehicleChoices,
+    issuance,
+    park,
+    ...extraFilters,
+  }
+  const filtersPending =
+    JSON.stringify(draftFilters) !== JSON.stringify(appliedFilters)
   const [page, setPage] = useState(1)
   const [related, setRelated] = useState<Related | null>(null)
   const [detail, setDetail] = useState<string | null>(null)
@@ -357,11 +339,14 @@ export default function SubscriptionManagement({
   }, [dirty, parentEditor])
   useEffect(() => {
     setSearch("")
-    setEstate("")
-    setStatus("")
-    setKind("")
-    setVehicle("")
-    setPark("")
+    setAppliedFilters(emptyFilters)
+    setExtraFilters(emptyExtraFilters)
+    setEstate([])
+    setStatus([])
+    setKind([])
+    setVehicleChoices([])
+    setIssuance([])
+    setPark([])
     setPage(1)
     setRelated(null)
     setDetail(null)
@@ -378,7 +363,7 @@ export default function SubscriptionManagement({
   }, [screen, focusId])
   useEffect(() => {
     setPage(1)
-  }, [search, estate, status, kind, vehicle, park, related])
+  }, [appliedFilters, related])
   function open(next: Editor) {
     setEditor(next)
     setError("")
@@ -387,9 +372,13 @@ export default function SubscriptionManagement({
     setDetail(null)
   }
   function change(patch: object) {
-    setEditor((old) =>
-      old ? { ...old, value: { ...old.value, ...patch } } as Editor : old,
-    )
+    setEditor((old) => {
+      if (!old) return old
+      if (old.kind !== "subscriber")
+        return { ...old, value: { ...old.value, ...patch } } as Editor
+      const next = updateRegistrationDraft(state, old.value, patch)
+      return { kind: "subscriber", value: next }
+    })
     setDirty(true)
     setError("")
   }
@@ -407,9 +396,9 @@ export default function SubscriptionManagement({
   function newRecord() {
     open(
       screen === "customers"
-        ? { kind: "customer", value: emptyCustomer(estate) }
+        ? { kind: "customer", value: emptyCustomer(appliedFilters.estate.length === 1 ? appliedFilters.estate[0] : "") }
         : screen === "vehicles"
-          ? { kind: "vehicle", value: emptyVehicle(estate) }
+          ? { kind: "vehicle", value: emptyVehicle(appliedFilters.estate.length === 1 ? appliedFilters.estate[0] : "") }
           : screen === "services"
             ? { kind: "service", value: emptyService() }
             : { kind: "subscriber", value: emptySubscriber() },
@@ -446,7 +435,7 @@ export default function SubscriptionManagement({
     })
   }
   function save() {
-    if (!editor) return
+    if (!editor || customerFaceBusy) return
     try {
       const next =
         editor.kind === "customer"
@@ -456,7 +445,7 @@ export default function SubscriptionManagement({
             : editor.kind === "service"
               ? saveManagedService(state, editor.value)
               : editor.kind === "subscriber"
-                ? saveSubscriber(state, editor.value)
+                ? saveSubscriberRegistration(state, editor.value)
                 : editor.kind === "issue"
                   ? issueSubscriberCard(
                       state,
@@ -472,6 +461,12 @@ export default function SubscriptionManagement({
                       editor.value.reason,
                     )
       onChange(next)
+      const savedSubscriber =
+        editor.kind === "subscriber"
+          ? (directoryOf(next).profiles.find(
+              (row) => row.id === editor.value.id,
+            ) ?? directoryOf(next).profiles[0])
+          : undefined
       if (
         parentEditor &&
         (editor.kind === "customer" || editor.kind === "vehicle")
@@ -479,13 +474,13 @@ export default function SubscriptionManagement({
         const nextDirectory = directoryOf(next)
         const updated = { ...parentEditor.value }
         if (editor.kind === "customer")
-          updated.customerId = nextDirectory.customers[0].id
+          updated.customerId = editor.value.id || nextDirectory.customers[0].id
         else
           updated.vehicleIds =
             updated.type === "VIP"
               ? [...updated.vehicleIds, nextDirectory.vehicles[0].id]
               : [nextDirectory.vehicles[0].id]
-        setEditor({ kind: "subscriber", value: updated })
+        setEditor({ kind: "subscriber", value: updateRegistrationDraft(next, parentEditor.value, updated) })
         setParentEditor(null)
         setDirty(true)
         notify("Đã tạo hồ sơ và chọn vào thuê bao đang đăng ký.")
@@ -495,7 +490,10 @@ export default function SubscriptionManagement({
         notify(
           editor.kind === "issue"
             ? "Đã cấp thẻ từ kho và cập nhật thuê bao, tra cứu thẻ."
-            : "Đã lưu thông tin.",
+            : savedSubscriber &&
+                subscriptionIdentificationMissing(next, savedSubscriber.id)
+              ? "Đã lưu thuê bao. Cần cấp thẻ hoặc bổ sung ảnh khuôn mặt để hoàn tất nhận diện cho thuê bao này."
+              : "Đã lưu thông tin.",
         )
       }
       setError("")
@@ -506,12 +504,16 @@ export default function SubscriptionManagement({
     }
   }
   function clearFilters() {
+    setAppliedFilters(emptyFilters)
+    setExtraFilters(emptyExtraFilters)
+    setPage(1)
+    setIssuance([])
     setSearch("")
-    setEstate("")
-    setStatus("")
-    setKind("")
-    setVehicle("")
-    setPark("")
+    setEstate([])
+    setStatus([])
+    setKind([])
+    setVehicleChoices([])
+    setPark([])
     setRelated(null)
   }
   const subscriberRows = state.subscriptions.filter((sub) => {
@@ -519,6 +521,11 @@ export default function SubscriptionManagement({
     if (!profile) return false
     const owner = customers.get(profile.customerId)
     const card = cards.get(sub.id)
+    if (
+      !anyOf(appliedFilters.issuance,
+        subscriptionCardState(sub, card, subscriberRequiresCard(directory, profile)))
+    )
+      return false
     const links =
       related?.kind === "customer"
         ? profile.customerId === related.id ||
@@ -530,39 +537,57 @@ export default function SubscriptionManagement({
             : true
     return (
       links &&
-      (!estate || profile.estate === estate) &&
-      (!status || profile.status === status) &&
-      (!kind || sub.type === kind) &&
-      (!vehicle || profile.vehicle === vehicle) &&
-      (!park || profile.lots.some((lot) => lot.parkId === park)) &&
+      anyOf(appliedFilters.estate, profile.estate) &&
+      anyOf(appliedFilters.status, profile.status) &&
+      (!appliedFilters.vehicleChoices.length || subscriberEnergies(directory,profile).some(energy => matchesVehicleChoices(profile.vehicle,energy,appliedFilters.vehicleChoices))) &&
+      (!appliedFilters.park.length ||
+        profile.lots.some((lot) => appliedFilters.park.includes(lot.parkId))) &&
       normalize(
         [sub.id, owner?.name, owner?.phone, sub.plate, card?.id].join(" "),
-      ).includes(normalize(search))
+      ).includes(normalize(appliedFilters.search))
     )
   })
   const customerRows = directory.customers.filter(
     (row) =>
-      (!estate || row.estate === estate) &&
-      (!status || String(row.active) === status) &&
+      anyOf(appliedFilters.unit, row.unitId || "") &&
+      anyOf(appliedFilters.face, String(!!row.faces?.length)) &&
+      anyOf(appliedFilters.source, row.source) &&
+      anyOf(appliedFilters.group, customerSubscriptionGroup(row)) &&
+      anyOf(appliedFilters.estate, row.estate) &&
+      anyOf(appliedFilters.status, String(row.active)) &&
       normalize(
-        [row.id, row.name, row.phone, row.apartment].join(" "),
-      ).includes(normalize(search)),
+        [
+          row.id,
+          row.name,
+          row.phone,
+          row.identity,
+          row.email,
+          row.address,
+          row.block,
+          row.apartment,
+        ].join(" "),
+      ).includes(normalize(appliedFilters.search)),
   )
   const vehicleRows = directory.vehicles.filter(
     (row) =>
-      (!estate || row.estate === estate) &&
-      (!status || String(row.active) === status) &&
-      (!vehicle || row.vehicle === vehicle) &&
+      anyOf(appliedFilters.brand, row.brand) &&
+      anyOf(appliedFilters.voucher, String(!!row.useVoucher)) &&
+      anyOf(appliedFilters.estate, row.estate) &&
+      anyOf(appliedFilters.status, String(row.active)) &&
+      matchesVehicleChoices(row.vehicle,row.energy,appliedFilters.vehicleChoices) &&
       normalize([row.id, row.plate, row.brand, row.color].join(" ")).includes(
-        normalize(search),
+        normalize(appliedFilters.search),
       ),
   )
   const serviceRows = directory.services.filter(
     (row) =>
-      (!status || String(row.active) === status) &&
-      (!kind || row.category === kind) &&
-      (!vehicle || row.vehicle === vehicle) &&
-      normalize([row.id, row.name].join(" ")).includes(normalize(search)),
+      serviceMatchesScope(row, appliedFilters.estate, appliedFilters.park) &&
+      anyOf(appliedFilters.status, String(row.active)) &&
+      anyOf(appliedFilters.kind, row.category) &&
+      matchesVehicleChoices(row.vehicle,row.energy,appliedFilters.vehicleChoices,true) &&
+      normalize([row.id, row.name].join(" ")).includes(
+        normalize(appliedFilters.search),
+      ),
   )
   const count =
     screen === "subscriptions"
@@ -654,7 +679,6 @@ export default function SubscriptionManagement({
               : issueSub?.cardId
                 ? "Cấp lại thẻ"
                 : "Cấp thẻ cho thuê bao"
-
   return (
     <div className="subscription-management">
       <div className="breadcrumbs">
@@ -719,126 +743,94 @@ export default function SubscriptionManagement({
           </div>
         </div>
       )}
-      <div className="panel sm-filters">
+      <Form
+        className="panel filter-panel lookup-filter-panel sm-filters"
+        aria-label={`Bộ lọc ${titles[screen]}`}
+        onSubmit={(event) => {
+          event.preventDefault()
+          setAppliedFilters({ ...draftFilters, search: search.trim() })
+          setSearch(search.trim())
+          setPage(1)
+        }}
+      >
         <div className="filter-heading">
-          <strong>
-            <Search size={14} /> Bộ lọc{" "}
-            {screen === "subscriptions"
-              ? "thuê bao"
-              : screen === "customers"
-                ? "khách hàng"
-                : screen === "vehicles"
-                  ? "xe"
-                  : "dịch vụ"}
-          </strong>
+          <span>
+            <ListFilter size={16} />
+            <strong>
+              Bộ lọc{" "}
+              {screen === "subscriptions"
+                ? "thuê bao"
+                : screen === "customers"
+                  ? "khách hàng"
+                  : screen === "vehicles"
+                    ? "xe"
+                    : "dịch vụ"}
+            </strong>
+            {filtersPending && (
+              <span className="filter-pending">Chưa áp dụng</span>
+            )}
+          </span>
           <Button variant="ghost" onClick={clearFilters}>
             Xóa bộ lọc
           </Button>
         </div>
-        <div className="filter-grid">
+        <div className="filter-grid lookup-filter-primary">
           <Field label="Tìm kiếm">
             <Input
               type="search"
               aria-label="Tìm kiếm danh sách"
+              maxLength={100}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Nhập mã, tên, biển số…"
             />
           </Field>
-          {screen !== "services" && <Field label="Khu đô thị">
-            <Select
-              aria-label="Khu đô thị"
-              value={estate}
-              onChange={(event) => {
-                setEstate(event.target.value)
-                setPark("")
-              }}
-              options={[
-                { value: "", label: "Tất cả khu đô thị" },
-                ...estateOptions,
-              ]}
-            />
-          </Field>}
-          <Field
-            label={
-              screen === "subscriptions" ? "Trạng thái thuê bao" : "Trạng thái"
-            }
-          >
-            <Select
-              aria-label={
-                screen === "subscriptions"
-                  ? "Trạng thái thuê bao"
-                  : "Trạng thái"
-              }
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-              options={[
-                { value: "", label: "Tất cả trạng thái" },
-                ...(screen === "subscriptions"
-                  ? subscriptionStates.map((value) => ({ value, label: value }))
-                  : [
-                      { value: "true", label: "Đang hoạt động" },
-                      { value: "false", label: "Ngừng hoạt động" },
-                    ]),
-              ]}
-            />
-          </Field>
-          {screen === "customers" ? (
-            <div className="sm-filter-note">
-              Tên và số điện thoại là thông tin hồ sơ; thuê bao liên kết bằng mã
-              khách hàng.
-            </div>
-          ) : (
-            <Field label="Phương tiện">
-              <Select
-                aria-label="Phương tiện"
-                value={vehicle}
-                onChange={(event) => setVehicle(event.target.value)}
-                options={[
-                  { value: "", label: "Tất cả phương tiện" },
-                  ...vehicles,
-                ]}
-              />
-            </Field>
-          )}
-          {(screen === "subscriptions" || screen === "services") && (
-            <>
-              <Field
-                label={
-                  screen === "subscriptions" ? "Loại thuê bao" : "Nhóm dịch vụ"
-                }
-              >
-                <Select
-                  aria-label={
-                    screen === "subscriptions"
-                      ? "Loại thuê bao"
-                      : "Nhóm dịch vụ"
-                  }
-                  value={kind}
-                  onChange={(event) => setKind(event.target.value)}
-                  options={[
-                    { value: "", label: "Tất cả" },
-                    ...(screen === "subscriptions"
-                      ? ["Thuê bao tháng", "VIP"]
-                      : ["Thuê bao", "Vãng lai"]),
-                  ]}
-                />
-              </Field>
-              {screen === "subscriptions" && <Field label="Bãi xe">
-                <Select
-                  aria-label="Bãi xe"
-                  value={park}
-                  onChange={(event) => setPark(event.target.value)}
-                  options={[
-                    { value: "", label: "Tất cả bãi xe" },
-                    ...managementParks
-                      .filter((row) => !estate || row.estate === estate)
-                      .map((row) => ({ value: row.id, label: row.label })),
-                  ]}
-                />
-              </Field>}
-            </>
-          )}
+          <CardLookupMultiFilter label="Khu đô thị" value={estate} options={estateOptions} allLabel="Tất cả khu đô thị"
+            onChange={(next) => {
+              setEstate(next)
+              setPark(park.filter((id) => !next.length || next.includes(id.split(":")[0])))
+              setExtraFilters({ ...extraFilters, unit: extraFilters.unit.filter((id) => !next.length || managementUnits.some((u) => u.id === id && next.includes(u.estate))) })
+            }} />
+        </div>
+        <div className="filter-grid lookup-filter-row">
+          <CardLookupMultiFilter label={screen === "subscriptions" ? "Trạng thái thuê bao" : "Trạng thái"} value={status}
+            allLabel="Tất cả trạng thái" onChange={setStatus}
+            options={screen === "subscriptions"
+              ? subscriptionStates.map((value) => ({ value, label: value }))
+              : [{ value: "true", label: "Đang hoạt động" }, { value: "false", label: "Ngừng hoạt động" }]} />
+          {screen !== "customers" && <CardLookupMultiFilter label="Loại phương tiện" value={vehicleChoices}
+            options={vehicleChoiceOptions()}
+            allLabel="Tất cả loại phương tiện" onChange={setVehicleChoices}
+            note={screen === "services"?"Dịch vụ dùng chung cho xe xăng và xe điện xuất hiện khi chọn một trong hai loại. Bỏ chọn hết để xem mọi loại.":undefined}/>
+          }
+          {screen === "services" && <CardLookupMultiFilter label="Kiểu dịch vụ" value={kind} allLabel="Tất cả kiểu dịch vụ"
+            onChange={setKind} options={["Thuê bao", "Vãng lai"].map((value) => ({ value, label: value }))} />}
+          {(screen === "subscriptions" || screen === "services") && <CardLookupMultiFilter label="Bãi xe" value={park}
+            allLabel="Tất cả bãi xe" onChange={setPark}
+            options={managementParks.filter((row) => !estate.length || estate.includes(row.estate)).map((row) => ({ value: row.id, label: row.label }))} />}
+          {screen === "subscriptions" && <CardLookupMultiFilter label="Tình trạng cấp thẻ" value={issuance}
+            allLabel="Tất cả tình trạng cấp thẻ" onChange={setIssuance} options={issuanceStates.map((value) => ({ value, label: value }))} />}
+          {screen === "customers" && <>
+            <CardLookupMultiFilter label="Nhóm thuê bao" value={extraFilters.group} options={customerGroups.map(value=>({value,label:value}))}
+              allLabel="Tất cả nhóm thuê bao" onChange={group=>setExtraFilters({...extraFilters,group})}/>
+            <CardLookupMultiFilter label="Đơn vị" value={extraFilters.unit} allLabel="Tất cả đơn vị"
+              onChange={(unit) => setExtraFilters({ ...extraFilters, unit })}
+              options={managementUnits.filter((u) => !estate.length || estate.includes(u.estate)).map((u) => ({ value: u.id, label: u.name }))} />
+            <CardLookupMultiFilter label="Khuôn mặt" value={extraFilters.face} allLabel="Tất cả"
+              onChange={(face) => setExtraFilters({ ...extraFilters, face })}
+              options={[{ value: "true", label: "Đã có ảnh" }, { value: "false", label: "Chưa có ảnh" }]} />
+            <CardLookupMultiFilter label="Nguồn" value={extraFilters.source} allLabel="Tất cả nguồn"
+              onChange={(source) => setExtraFilters({ ...extraFilters, source })}
+              options={Array.from(new Set(directory.customers.map((c) => c.source))).map((v) => ({ value: v, label: v }))} />
+          </>}
+          {screen === "vehicles" && <>
+            <CardLookupMultiFilter label="Hãng xe" value={extraFilters.brand} allLabel="Tất cả hãng xe"
+              onChange={(brand) => setExtraFilters({ ...extraFilters, brand })}
+              options={Array.from(new Set([...vehicleBrands, ...directory.vehicles.map((v) => v.brand)].filter(Boolean))).sort().map((v) => ({ value: v, label: v }))} />
+            <CardLookupMultiFilter label="Voucher" value={extraFilters.voucher} allLabel="Tất cả"
+              onChange={(voucher) => setExtraFilters({ ...extraFilters, voucher })}
+              options={[{ value: "true", label: "Có" }, { value: "false", label: "Không" }]} />
+          </>}
         </div>
         {related && (
           <div className="sm-related">
@@ -852,10 +844,17 @@ export default function SubscriptionManagement({
             </Button>
           </div>
         )}
-      </div>
+        <div className="lookup-filter-footer">
+          <Button variant="primary" type="submit">
+            <Search size={14} />
+            Áp dụng
+          </Button>
+        </div>
+      </Form>
       <div className="panel sm-list">
-        <div className="sm-list-heading">
-          <strong>
+        <ManagementListTable key={screen} screen={screen} state={state} directory={directory} ids={ids}
+          heading={<>
+<strong>
             {fmt(count)}{" "}
             {screen === "subscriptions"
               ? "thuê bao"
@@ -870,323 +869,10 @@ export default function SubscriptionManagement({
               ? "Mỗi thuê bao một dòng, có thể áp dụng nhiều bãi."
               : "Chọn mã để xem thông tin và các liên kết."}
           </span>
-        </div>
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                {(screen === "subscriptions"
-                  ? [
-                      "Mã thuê bao / Chủ thuê bao",
-                      "Loại / Nhóm thuê bao",
-                      "Phương tiện / Biển số",
-                      "Bãi và gói dịch vụ",
-                      "Hiệu lực",
-                      "Trạng thái thuê bao",
-                      "Thẻ đang cấp",
-                      "Thao tác",
-                    ]
-                  : screen === "customers"
-                    ? [
-                        "Mã / Khách hàng",
-                        "Khu đô thị",
-                        "Số điện thoại",
-                        "Căn hộ",
-                        "Nguồn",
-                        "Trạng thái",
-                        "Thuê bao liên quan",
-                        "Thao tác",
-                      ]
-                    : screen === "vehicles"
-                      ? [
-                          "Mã / Biển số",
-                          "Khu đô thị",
-                          "Phương tiện",
-                          "Hãng / Màu",
-                          "Trạng thái",
-                          "Thuê bao liên quan",
-                          "Thao tác",
-                        ]
-                      : [
-                          "Mã / Dịch vụ",
-                          "Phương tiện / Nhóm",
-                          "Kiểm soát",
-                          "Đơn giá",
-                          "Hiệu lực",
-                          "Trạng thái",
-                          "Thao tác",
-                        ]
-                ).map((label) => (
-                  <th key={label}>{label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {ids.map((id) => {
-                if (screen === "subscriptions") {
-                  const sub = state.subscriptions.find((row) => row.id === id)!,
-                    profile = profiles.get(id)!,
-                    customer = customers.get(profile.customerId),
-                    card = cards.get(id)
-                  return (
-                    <tr key={id}>
-                      <td>
-                        <Button variant="link" onClick={() => setDetail(id)}>
-                          {id}
-                        </Button>
-                        <span className="sm-secondary">{customer?.name}</span>
-                      </td>
-                      <td>
-                        <Badge tone={sub.type === "VIP" ? "amber" : "blue"}>
-                          {sub.type}
-                        </Badge>
-                        <span className="sm-secondary">
-                          {sub.type === "VIP" ? "—" : sub.group}
-                        </span>
-                      </td>
-                      <td>
-                        {profile.vehicle}
-                        <span className="sm-secondary sm-wrap">
-                          {sub.plate}
-                        </span>
-                      </td>
-                      <td>
-                        {profile.lots.map((lot) => (
-                          <span className="sm-secondary" key={lot.parkId}>
-                            {
-                              managementParks.find(
-                                (park) => park.id === lot.parkId,
-                              )?.label
-                            }
-                            <small>
-                              {services.get(lot.serviceId)?.name}
-                              {!lot.active ? " · Tạm ngừng" : ""}
-                            </small>
-                          </span>
-                        ))}
-                      </td>
-                      <td>
-                        {date(sub.effectiveFrom)}
-                        <span className="sm-secondary">
-                          {sub.expiry
-                            ? `đến ${date(sub.expiry)}`
-                            : "Không giới hạn"}
-                        </span>
-                      </td>
-                      <td>
-                        <Badge tone={tone(profile.status)}>
-                          {profile.status}
-                        </Badge>
-                      </td>
-                      <td>
-                        {card ? (
-                          <>
-                            <Button
-                              variant="link"
-                              onClick={() => onCard(card, id)}
-                            >
-                              {card.id}
-                            </Button>
-                            <span className="sm-secondary">
-                              <Badge tone={tone(lookupCardStatus(card, today))}>
-                                {lookupCardStatus(card, today)}
-                              </Badge>
-                            </span>
-                          </>
-                        ) : (
-                          <span className="muted">Chưa có thẻ lưu hành</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className="sm-actions">
-                          <Button
-                            variant="ghost"
-                            aria-label={`Xem thuê bao ${id}`}
-                            onClick={() => setDetail(id)}
-                          >
-                            Chi tiết
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            disabled={profile.status === "Đã hủy"}
-                            onClick={() => issue(id)}
-                          >
-                            {sub.cardId ? "Cấp lại thẻ" : "Cấp thẻ"}
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                }
-                if (screen === "customers") {
-                  const row = customers.get(id)!
-                  return (
-                    <tr key={id}>
-                      <td>
-                        <Button variant="link" onClick={() => setDetail(id)}>
-                          {row.name}
-                        </Button>
-                        <span className="sm-secondary">{id}</span>
-                      </td>
-                      <td>
-                        {
-                          estates.find((estate) => estate.id === row.estate)
-                            ?.short
-                        }
-                      </td>
-                      <td>{row.phone || "—"}</td>
-                      <td>{row.apartment || "—"}</td>
-                      <td>{row.source}</td>
-                      <td>
-                        <Badge tone={row.active ? "green" : "neutral"}>
-                          {row.active ? "Đang hoạt động" : "Ngừng hoạt động"}
-                        </Badge>
-                      </td>
-                      <td>
-                        <Button
-                          variant="link"
-                          onClick={() =>
-                            onNavigate("subscriptions", `customer:${id}`)
-                          }
-                        >
-                          {linkedCount("customer", id)} thuê bao
-                        </Button>
-                      </td>
-                      <td>
-                        <Button
-                          variant="ghost"
-                          aria-label={`Sửa khách hàng ${id}`}
-                          onClick={() => editRecord(id)}
-                        >
-                          <Pencil size={14} />
-                        </Button>
-                      </td>
-                    </tr>
-                  )
-                }
-                if (screen === "vehicles") {
-                  const row = vehicleMap.get(id)!
-                  return (
-                    <tr key={id}>
-                      <td>
-                        <Button variant="link" onClick={() => setDetail(id)}>
-                          {row.plate}
-                        </Button>
-                        <span className="sm-secondary">{id}</span>
-                      </td>
-                      <td>
-                        {
-                          estates.find((estate) => estate.id === row.estate)
-                            ?.short
-                        }
-                      </td>
-                      <td>{row.vehicle}</td>
-                      <td>
-                        {row.brand || "—"}
-                        <span className="sm-secondary">{row.color || "—"}</span>
-                      </td>
-                      <td>
-                        <Badge tone={row.active ? "green" : "neutral"}>
-                          {row.active ? "Đang hoạt động" : "Ngừng hoạt động"}
-                        </Badge>
-                      </td>
-                      <td>
-                        <Button
-                          variant="link"
-                          onClick={() =>
-                            onNavigate("subscriptions", `vehicle:${id}`)
-                          }
-                        >
-                          {linkedCount("vehicle", id)} thuê bao
-                        </Button>
-                      </td>
-                      <td>
-                        <Button
-                          variant="ghost"
-                          aria-label={`Sửa xe ${id}`}
-                          onClick={() => editRecord(id)}
-                        >
-                          <Pencil size={14} />
-                        </Button>
-                      </td>
-                    </tr>
-                  )
-                }
-                const row = services.get(id)!
-                return (
-                  <tr key={id}>
-                    <td>
-                      <Button variant="link" onClick={() => setDetail(id)}>
-                        {row.name}
-                      </Button>
-                      <span className="sm-secondary">{id}</span>
-                    </td>
-                    <td>
-                      {row.vehicle}
-                      <span className="sm-secondary">{row.category}</span>
-                    </td>
-                    <td>{row.control}</td>
-                    <td>
-                      {fmt(row.price)} đ
-                      <span className="sm-secondary">{row.pricing}</span>
-                    </td>
-                    <td>
-                      {date(row.validFrom)}
-                      <span className="sm-secondary">
-                        {row.validTo
-                          ? `đến ${date(row.validTo)}`
-                          : "Không giới hạn ngày kết thúc"}
-                      </span>
-                    </td>
-                    <td>
-                      <Badge tone={row.active ? "green" : "neutral"}>
-                        {row.active ? "Đang hoạt động" : "Ngừng hoạt động"}
-                      </Badge>
-                    </td>
-                    <td>
-                      <div className="sm-actions">
-                        <Button
-                          variant="ghost"
-                          aria-label={`Sửa dịch vụ ${id}`}
-                          onClick={() => editRecord(id)}
-                        >
-                          <Pencil size={14} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          aria-label={`Sao chép dịch vụ ${id}`}
-                          onClick={() =>
-                            open({
-                              kind: "service",
-                              value: {
-                                ...row,
-                                id: "",
-                                name: `${row.name} (bản sao)`,
-                              },
-                            })
-                          }
-                        >
-                          <Copy size={14} />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-              {!ids.length && (
-                <tr>
-                  <td colSpan={8}>
-                    <div className="sm-empty">
-                      <Search size={24} />
-                      <strong>Không có dữ liệu phù hợp</strong>
-                      <span>Kiểm tra lại bộ lọc hoặc thêm hồ sơ mới.</span>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+          </>}
+          onDetail={setDetail} onEdit={editRecord} onIssue={issue} onCard={onCard}
+          onRelated={(kind,id)=>onNavigate("subscriptions",`${kind}:${id}`)}
+          onCopyService={id=>{const row=services.get(id);if(row)open({kind:"service",value:{...row,id:"",name:`${row.name} (bản sao)`}})}}/>
         <div className="sm-pagination">
           <span>
             {count
@@ -1210,7 +896,6 @@ export default function SubscriptionManagement({
           </Button>
         </div>
       </div>
-
       {detail && (
         <Overlay
           wide
@@ -1351,6 +1036,38 @@ export default function SubscriptionManagement({
                 ))}
               </div>
               <h3 className="sm-subheading">Thẻ cấp cho thuê bao</h3>
+              {selectedProfile.uhf && (
+                <div className="sm-card-panel">
+                  <CreditCard size={23} />
+                  <div>
+                    <strong>Thẻ UHF {selectedProfile.uhf.code}</strong>
+                    <p>
+                      {selectedProfile.uhf.label
+                        ? `Mã in trên tem: ${selectedProfile.uhf.label} · `
+                        : ""}
+                      Dán trên xe, không quản lý trong kho. Đổi mã thẻ UHF tại
+                      Chỉnh sửa thuê bao.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {subscriptionPlateControlConflict(state, selectedSub.id) && (
+                <p className="sm-warning">
+                  Gói hiện tại đang bắt buộc biển số.{" "}
+                  {plateFreeControlMessage(selectedProfile)} Chỉnh sửa thuê bao
+                  để chuyển sang gói phù hợp trước khi cấp thẻ.
+                </p>
+              )}
+              {subscriptionIdentificationMissing(state, selectedSub.id) && (
+                <p className="sm-note">
+                  {selectedProfile.noPlate
+                    ? "Thuê bao xe không có biển số"
+                    : "VIP không giới hạn biển số"}{" "}
+                  chưa có thẻ lưu hành hoặc ảnh khuôn mặt nên chưa thể nhận diện
+                  tại cổng. Cấp thẻ hoặc bổ sung ảnh khuôn mặt cho chủ thuê
+                  bao để hoàn tất đăng ký.
+                </p>
+              )}
               <div className="sm-card-panel">
                 <CreditCard size={22} />
                 <div>
@@ -1360,7 +1077,7 @@ export default function SubscriptionManagement({
                       ? `${lookupCardStatus(selectedCard, today)} · Kho ${selectedCard.park}`
                       : selectedSub.cardId
                         ? `Thẻ gần nhất: ${selectedSub.cardId}. Có thể cấp lại sau khi thẻ cũ đã được xử lý.`
-                        : "Đăng ký thuê bao trước, cấp thẻ từ kho khi khách đến nhận."}
+                        : "Chỉnh sửa thuê bao để chọn và cấp thẻ ngay trong hồ sơ."}
                   </p>
                 </div>
                 {selectedCard && (
@@ -1369,12 +1086,16 @@ export default function SubscriptionManagement({
                     <ArrowRight size={14} />
                   </Button>
                 )}
-                <Button
-                  onClick={() => issue(selectedSub.id)}
-                  disabled={selectedProfile.status !== "Đang hoạt động"}
-                >
-                  {selectedSub.cardId ? "Cấp lại thẻ" : "Cấp thẻ"}
-                </Button>
+                {profileUsesCard(directory, selectedProfile) ? (
+                  <Button
+                    onClick={() => issue(selectedSub.id)}
+                    disabled={selectedProfile.status !== "Đang hoạt động"}
+                  >
+                    {selectedSub.cardId ? "Cấp lại thẻ" : "Cấp thẻ"}
+                  </Button>
+                ) : (
+                  <span className="sr-hint">Dịch vụ không sử dụng thẻ</span>
+                )}
               </div>
               <div className="sm-state-controls">
                 <p>
@@ -1406,12 +1127,27 @@ export default function SubscriptionManagement({
           {screen === "customers" && selectedCustomer && (
             <>
               <Heading>{selectedCustomer.name}</Heading>
+              <Badge tone={selectedCustomer.active ? "green" : "neutral"}>
+                {selectedCustomer.active ? "Đang hoạt động" : "Ngừng hoạt động"}
+              </Badge>
               <div className="sm-detail-grid">
                 {[
                   ["Mã khách hàng", selectedCustomer.id],
+                  [
+                    "Khu đô thị",
+                    estates.find((e) => e.id === selectedCustomer.estate)?.name,
+                  ],
                   ["Số điện thoại", selectedCustomer.phone],
+                  ["Nhóm thuê bao", customerSubscriptionGroup(selectedCustomer)],
                   ["Email", selectedCustomer.email],
-                  ["Giấy tờ định danh", selectedCustomer.identity],
+                  ["CCCD", selectedCustomer.identity],
+                  [
+                    "Đơn vị",
+                    managementUnits.find(
+                      (u) => u.id === selectedCustomer.unitId,
+                    )?.name,
+                  ],
+                  ["Tòa", selectedCustomer.block],
                   ["Căn hộ", selectedCustomer.apartment],
                   ["Địa chỉ", selectedCustomer.address],
                   ["Nguồn", selectedCustomer.source],
@@ -1423,6 +1159,8 @@ export default function SubscriptionManagement({
                   </div>
                 ))}
               </div>
+              <AuditInformation record={selectedCustomer} />
+              <CustomerFaces value={selectedCustomer.faces} />
               <Button
                 onClick={() =>
                   onNavigate("subscriptions", `customer:${detail}`)
@@ -1436,12 +1174,20 @@ export default function SubscriptionManagement({
           {screen === "vehicles" && selectedVehicle && (
             <>
               <Heading>{selectedVehicle.plate}</Heading>
+              <Badge tone={selectedVehicle.active ? "green" : "neutral"}>
+                {selectedVehicle.active ? "Đang hoạt động" : "Ngừng hoạt động"}
+              </Badge>
               <div className="sm-detail-grid">
                 {[
                   ["Mã xe", selectedVehicle.id],
-                  ["Phương tiện", selectedVehicle.vehicle],
+                  [
+                    "Khu đô thị",
+                    estates.find((e) => e.id === selectedVehicle.estate)?.name,
+                  ],
+                  ["Loại phương tiện",vehicleVariantLabel(selectedVehicle.vehicle,selectedVehicle.energy)],
                   ["Hãng xe", selectedVehicle.brand],
                   ["Màu xe", selectedVehicle.color],
+                  ["Voucher", selectedVehicle.useVoucher ? "Có" : "Không"],
                   ["Ghi chú", selectedVehicle.note],
                 ].map(([label, value]) => (
                   <div key={label}>
@@ -1450,6 +1196,7 @@ export default function SubscriptionManagement({
                   </div>
                 ))}
               </div>
+              <AuditInformation record={selectedVehicle} />
               <Button
                 onClick={() => onNavigate("subscriptions", `vehicle:${detail}`)}
               >
@@ -1461,22 +1208,32 @@ export default function SubscriptionManagement({
           {screen === "services" && selectedService && (
             <>
               <Heading>{selectedService.name}</Heading>
+              <Badge tone={selectedService.active ? "green" : "neutral"}>
+                {selectedService.active ? "Đang hoạt động" : "Ngừng hoạt động"}
+              </Badge>
               <div className="sm-detail-grid">
                 {[
                   ["Mã dịch vụ", selectedService.id],
-                  ["Loại phương tiện", selectedService.vehicle],
-                  ["Nhóm dịch vụ", selectedService.category],
-                  ["Kiểm soát", selectedService.control],
-                  ["Cách tính giá", selectedService.pricing],
-                  ["Đơn giá", `${fmt(selectedService.price)} đ`],
                   [
-                    "Hiệu lực",
-                    `${date(selectedService.validFrom)} – ${
-                      selectedService.validTo
-                        ? date(selectedService.validTo)
-                        : "Không giới hạn"
-                    }`,
+                    "Loại phương tiện",
+                    vehicleVariantLabel(
+                      selectedService.vehicle,
+                      selectedService.energy,
+                      true,
+                    ),
                   ],
+                  [
+                    "Bãi xe áp dụng",
+                    managementParks
+                      .filter((park) =>
+                        selectedService.parkIds.includes(park.id),
+                      )
+                      .map((park) => park.label)
+                      .join("; "),
+                  ],
+                  ["Kiểu dịch vụ", selectedService.category],
+                  ["Áp dụng voucher", selectedService.voucher ? "Có" : "Không"],
+                  ["Kiểm soát", selectedService.control],
                   ["Ghi chú", selectedService.note],
                 ].map(([label, value]) => (
                   <div key={label}>
@@ -1485,6 +1242,7 @@ export default function SubscriptionManagement({
                   </div>
                 ))}
               </div>
+              <AuditInformation record={selectedService} />
               <Button
                 onClick={() => onNavigate("subscriptions", `service:${detail}`)}
               >
@@ -1495,14 +1253,13 @@ export default function SubscriptionManagement({
           )}
         </Overlay>
       )}
-
       {editor && (
         <Overlay
           wide
           title={editorTitle}
           subtitle={
             editor.kind === "subscriber"
-              ? "Chọn hồ sơ có sẵn; việc cấp thẻ được thực hiện sau khi lưu thuê bao."
+              ? "Chọn dịch vụ, phương tiện và mã thẻ phù hợp. Thuê bao và cấp thẻ được lưu cùng lúc."
               : undefined
           }
           onClose={closeEditor}
@@ -1516,7 +1273,9 @@ export default function SubscriptionManagement({
                 variant="primary"
                 onClick={save}
                 disabled={
-                  editor.kind === "issue" && (!!oldCard || !editor.value.cardId)
+                  customerFaceBusy ||
+                  (editor.kind === "issue" &&
+                    (!!oldCard || !editor.value.cardId))
                 }
               >
                 <Check size={14} />
@@ -1533,99 +1292,168 @@ export default function SubscriptionManagement({
             }}
           >
             {editor.kind === "customer" && (
-              <div className="sm-form-grid">
-                <Field label="Khu đô thị" required>
-                  <Select
-                    aria-label="Khu đô thị khách hàng"
-                    disabled={!!editor.value.id}
-                    value={editor.value.estate}
-                    onChange={(event) => change({ estate: event.target.value })}
-                    options={[
-                      { value: "", label: "Chọn khu đô thị" },
-                      ...estateOptions,
-                    ]}
-                  />
-                </Field>
-                <Field label="Tên khách hàng" required>
-                  <Input
-                    aria-label="Tên khách hàng"
-                    maxLength={255}
-                    value={editor.value.name}
-                    onChange={(event) => change({ name: event.target.value })}
-                  />
-                </Field>
-                <Field label="Số điện thoại">
-                  <Input
-                    aria-label="Số điện thoại khách hàng"
-                    type="tel"
-                    maxLength={12}
-                    value={editor.value.phone}
-                    onChange={(event) => change({ phone: event.target.value })}
-                  />
-                </Field>
-                <Field label="Email">
-                  <Input
-                    aria-label="Email khách hàng"
-                    type="email"
-                    maxLength={255}
-                    value={editor.value.email}
-                    onChange={(event) => change({ email: event.target.value })}
-                  />
-                </Field>
-                <Field label="Căn hộ">
-                  <Input
-                    aria-label="Căn hộ khách hàng"
-                    maxLength={80}
-                    value={editor.value.apartment}
-                    onChange={(event) =>
-                      change({ apartment: event.target.value })
-                    }
-                    placeholder="Ví dụ: S1.1-1205"
-                  />
-                </Field>
-                <Field label="Giấy tờ định danh">
-                  <Input
-                    aria-label="Giấy tờ định danh"
-                    inputMode="numeric"
-                    maxLength={20}
-                    value={editor.value.identity}
-                    onChange={(event) =>
-                      change({ identity: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field label="Địa chỉ">
-                  <Input
-                    aria-label="Địa chỉ khách hàng"
-                    maxLength={255}
-                    value={editor.value.address}
-                    onChange={(event) =>
-                      change({ address: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field label="Trạng thái khách hàng">
-                  <Select
-                    aria-label="Trạng thái khách hàng"
-                    value={String(editor.value.active)}
-                    onChange={(event) =>
-                      change({ active: event.target.value === "true" })
-                    }
-                    options={[
-                      { value: "true", label: "Đang hoạt động" },
-                      { value: "false", label: "Ngừng hoạt động" },
-                    ]}
-                  />
-                </Field>
-                <Field label="Ghi chú">
-                  <Textarea
-                    aria-label="Ghi chú khách hàng"
-                    maxLength={500}
-                    value={editor.value.note}
-                    onChange={(event) => change({ note: event.target.value })}
-                  />
-                </Field>
-              </div>
+              <>
+                <div className="sm-form-grid">
+                  <Field label="Khu đô thị" required>
+                    <Select
+                      aria-label="Khu đô thị khách hàng"
+                      disabled={!!editor.value.id}
+                      value={editor.value.estate}
+                      onChange={(event) =>
+                        change({
+                          estate: event.target.value,
+                          unitId: "",
+                          block: "",
+                          apartment: "",
+                        })
+                      }
+                      options={[
+                        { value: "", label: "Chọn khu đô thị" },
+                        ...estateOptions,
+                      ]}
+                    />
+                  </Field>
+                  <Field label="Nhóm thuê bao" required hint="Dùng chung cho các thuê bao của khách hàng. Thay đổi nhóm sẽ cập nhật các thuê bao đã có.">
+                    <Select aria-label="Nhóm thuê bao khách hàng" value={editor.value.group ?? customerSubscriptionGroup(editor.value)}
+                      onChange={event=>change({group:event.target.value})} options={customerGroups}/>
+                  </Field>
+                  <Field label="Tên khách hàng" required>
+                    <Input
+                      aria-label="Tên khách hàng"
+                      maxLength={255}
+                      value={editor.value.name}
+                      onChange={(event) => change({ name: event.target.value })}
+                    />
+                  </Field>
+                  <Field label="Số điện thoại" required>
+                    <Input
+                      aria-label="Số điện thoại khách hàng"
+                      type="tel"
+                      maxLength={12}
+                      value={editor.value.phone}
+                      onChange={(event) =>
+                        change({ phone: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Email">
+                    <Input
+                      aria-label="Email khách hàng"
+                      type="email"
+                      maxLength={255}
+                      value={editor.value.email}
+                      onChange={(event) =>
+                        change({ email: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Đơn vị" required>
+                    <Select
+                      aria-label="Đơn vị khách hàng"
+                      value={editor.value.unitId || ""}
+                      disabled={!editor.value.estate}
+                      onChange={(e) => change({ unitId: e.target.value })}
+                      options={[
+                        { value: "", label: "Chọn đơn vị" },
+                        ...managementUnits
+                          .filter((u) => u.estate === editor.value.estate)
+                          .map((u) => ({ value: u.id, label: u.name })),
+                      ]}
+                    />
+                  </Field>
+                  <Field label="Tòa" required>
+                    <Select
+                      aria-label="Tòa khách hàng"
+                      value={editor.value.block || ""}
+                      disabled={!editor.value.estate}
+                      onChange={(e) =>
+                        change({ block: e.target.value, apartment: "" })
+                      }
+                      options={[
+                        { value: "", label: "Chọn tòa" },
+                        ...[
+                          ...new Set(
+                            [
+                              ...(editor.value.estate === "A"
+                                ? ["S1.1", "S1.2", "S2.1"]
+                                : editor.value.estate === "B"
+                                  ? ["S3.1", "S4.1"]
+                                  : ["T1", "T2"]),
+                              ...directory.customers
+                                .filter((c) => c.estate === editor.value.estate)
+                                .map(
+                                  (c) => c.block || c.apartment.split("-")[0],
+                                )
+                                .filter(Boolean),
+                              editor.value.block || "",
+                            ].filter(Boolean),
+                          ),
+                        ]
+                          .sort()
+                          .map((b) => ({ value: b, label: b })),
+                      ]}
+                    />
+                  </Field>
+                  <Field label="Căn hộ" required={editor.value.group==="Cư dân"}>
+                    <Input
+                      aria-label="Căn hộ khách hàng"
+                      maxLength={80}
+                      value={editor.value.apartment}
+                      onChange={(event) =>
+                        change({ apartment: event.target.value })
+                      }
+                      placeholder="Ví dụ: S1.1-1205"
+                    />
+                  </Field>
+                  <Field label="CCCD">
+                    <Input
+                      aria-label="CCCD"
+                      inputMode="numeric"
+                      maxLength={20}
+                      value={editor.value.identity}
+                      onChange={(event) =>
+                        change({ identity: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Địa chỉ">
+                    <Input
+                      aria-label="Địa chỉ khách hàng"
+                      maxLength={255}
+                      value={editor.value.address}
+                      onChange={(event) =>
+                        change({ address: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Trạng thái khách hàng">
+                    <Select
+                      aria-label="Trạng thái khách hàng"
+                      value={String(editor.value.active)}
+                      onChange={(event) =>
+                        change({ active: event.target.value === "true" })
+                      }
+                      options={[
+                        { value: "true", label: "Đang hoạt động" },
+                        { value: "false", label: "Ngừng hoạt động" },
+                      ]}
+                    />
+                  </Field>
+                  <Field label="Ghi chú">
+                    <Textarea
+                      aria-label="Ghi chú khách hàng"
+                      maxLength={500}
+                      value={editor.value.note}
+                      onChange={(event) => change({ note: event.target.value })}
+                    />
+                  </Field>
+                </div>
+                <CustomerFaces
+                  value={editor.value.faces}
+                  onChange={(faces) => change({ faces })}
+                  onBusyChange={setCustomerFaceBusy}
+                />
+              </>
             )}
             {editor.kind === "vehicle" && (
               <div className="sm-form-grid">
@@ -1651,22 +1479,26 @@ export default function SubscriptionManagement({
                     }
                   />
                 </Field>
-                <Field label="Phương tiện" required>
-                  <Select
-                    aria-label="Loại phương tiện xe"
-                    value={editor.value.vehicle}
-                    onChange={(event) =>
-                      change({ vehicle: event.target.value })
-                    }
-                    options={vehicles}
-                  />
+                <Field label="Loại phương tiện" required>
+                  <Select aria-label="Loại phương tiện xe" value={editor.value.energy && editor.value.energy !== "Chưa xác định" ? `${editor.value.vehicle}|${editor.value.energy}` : ""}
+                    onChange={e=>{const [vehicle,energy]=e.target.value.split("|");change({vehicle:vehicle||"Ô tô",energy:energy||""})}}
+                    options={[{value:"",label:"Chọn loại phương tiện"},...vehicleChoiceOptions()]}/>
                 </Field>
-                <Field label="Hãng xe">
-                  <Input
+                <Field label="Hãng xe" required>
+                  <Select
                     aria-label="Hãng xe"
-                    maxLength={80}
                     value={editor.value.brand}
-                    onChange={(event) => change({ brand: event.target.value })}
+                    onChange={(e) => change({ brand: e.target.value })}
+                    options={[
+                      { value: "", label: "Chọn hãng xe" },
+                      ...Array.from(
+                        new Set(
+                          [...vehicleBrands, editor.value.brand].filter(
+                            Boolean,
+                          ),
+                        ),
+                      ),
+                    ]}
                   />
                 </Field>
                 <Field label="Màu xe">
@@ -1677,6 +1509,14 @@ export default function SubscriptionManagement({
                     onChange={(event) => change({ color: event.target.value })}
                   />
                 </Field>
+                <label className="sm-check">
+                  <input
+                    type="checkbox"
+                    disabled
+                    checked={!!editor.value.useVoucher}
+                  />
+                  Áp dụng voucher (theo dữ liệu voucher)
+                </label>
                 <Field label="Trạng thái xe">
                   <Select
                     aria-label="Trạng thái xe"
@@ -1702,6 +1542,19 @@ export default function SubscriptionManagement({
             )}
             {editor.kind === "service" && (
               <>
+                <RelationChoices
+                  label="Bãi xe áp dụng"
+                  value={editor.value.parkIds}
+                  options={managementParks.map((park) => ({
+                    value: park.id,
+                    label: park.label,
+                  }))}
+                  onChange={(parkIds) => change({ parkIds })}
+                />
+                <p className="sm-note">
+                  Chọn ít nhất một bãi xe. Có thể dùng chung gói dịch vụ cho
+                  nhiều bãi; mỗi thuê bao chọn gói theo bãi đã đăng ký.
+                </p>
                 <div className="sm-form-grid">
                   <Field label="Tên dịch vụ" required>
                     <Input
@@ -1711,23 +1564,25 @@ export default function SubscriptionManagement({
                       onChange={(event) => change({ name: event.target.value })}
                     />
                   </Field>
-                  <Field label="Phương tiện">
-                    <Select
-                      aria-label="Phương tiện dịch vụ"
-                      value={editor.value.vehicle}
-                      onChange={(event) =>
-                        change({ vehicle: event.target.value })
-                      }
-                      options={vehicles}
-                    />
+                  <Field label="Loại phương tiện" required>
+                    <Select aria-label="Loại phương tiện dịch vụ" value={`${editor.value.vehicle}|${editor.value.energy||""}`}
+                      onChange={e=>{const [vehicle,energy]=e.target.value.split("|");change({vehicle,energy})}} options={vehicleChoiceOptions(true)}/>
                   </Field>
-                  <Field label="Nhóm dịch vụ">
+                  <Field label="Kiểu dịch vụ">
                     <Select
-                      aria-label="Nhóm dịch vụ"
+                      aria-label="Kiểu dịch vụ"
                       value={editor.value.category}
-                      onChange={(event) =>
-                        change({ category: event.target.value })
-                      }
+                      onChange={(event) => {
+                        const category = event.target
+                          .value as ManagedService["category"]
+                        change({
+                          category,
+                          prices: undefined,
+                          pricing:
+                            category === "Thuê bao" ? "Theo tháng" : "Theo giờ",
+                          price: 0,
+                        })
+                      }}
                       options={["Thuê bao", "Vãng lai"]}
                     />
                   </Field>
@@ -1741,39 +1596,14 @@ export default function SubscriptionManagement({
                       options={[...controlModes]}
                     />
                   </Field>
-                  <Field label="Cách tính giá">
-                    <Select
-                      aria-label="Cách tính giá"
-                      value={editor.value.pricing}
-                      onChange={(event) =>
-                        change({
-                          pricing: event.target.value,
-                          ...(event.target.value === "Miễn phí"
-                            ? { price: 0 }
-                            : {}),
-                        })
-                      }
-                      options={[
-                        "Theo tháng",
-                        "Theo giờ",
-                        "Theo lượt",
-                        "Miễn phí",
-                      ]}
+                  <label className="sm-check">
+                    <input
+                      type="checkbox"
+                      checked={!!editor.value.voucher}
+                      onChange={(e) => change({ voucher: e.target.checked })}
                     />
-                  </Field>
-                  <Field label="Đơn giá (đ)">
-                    <Input
-                      type="number"
-                      aria-label="Đơn giá dịch vụ"
-                      min={0}
-                      max={100000000}
-                      disabled={editor.value.pricing === "Miễn phí"}
-                      value={editor.value.price}
-                      onChange={(event) =>
-                        change({ price: Number(event.target.value) })
-                      }
-                    />
-                  </Field>
+                    Áp dụng voucher
+                  </label>
                   <Field label="Trạng thái dịch vụ">
                     <Select
                       aria-label="Trạng thái dịch vụ"
@@ -1785,30 +1615,6 @@ export default function SubscriptionManagement({
                         { value: "true", label: "Đang hoạt động" },
                         { value: "false", label: "Ngừng hoạt động" },
                       ]}
-                    />
-                  </Field>
-                  <Field label="Hiệu lực từ" required>
-                    <Input
-                      type="date"
-                      aria-label="Hiệu lực dịch vụ từ"
-                      value={editor.value.validFrom}
-                      onChange={(event) =>
-                        change({ validFrom: event.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field
-                    label="Hiệu lực đến"
-                    hint="Để trống nếu không giới hạn."
-                  >
-                    <Input
-                      type="date"
-                      aria-label="Hiệu lực dịch vụ đến"
-                      min={editor.value.validFrom}
-                      value={editor.value.validTo}
-                      onChange={(event) =>
-                        change({ validTo: event.target.value })
-                      }
                     />
                   </Field>
                   <Field label="Ghi chú">
@@ -1826,439 +1632,11 @@ export default function SubscriptionManagement({
                 </p>
               </>
             )}
-            {editor.kind === "subscriber" &&
-              (() => {
-                const value = editor.value
-                const customerOptions = directory.customers
-                  .filter(
-                    (row) =>
-                      row.estate === value.estate &&
-                      (row.active || row.id === value.customerId),
-                  )
-                  .map((row) => ({
-                    value: row.id,
-                    label: `${row.name} · ${row.id} · ${row.phone || "Chưa có SĐT"}`,
-                  }))
-                const vehicleOptions = directory.vehicles
-                  .filter(
-                    (row) =>
-                      row.estate === value.estate &&
-                      row.vehicle === value.vehicle &&
-                      (row.active || value.vehicleIds.includes(row.id)),
-                  )
-                  .map((row) => ({
-                    value: row.id,
-                    label: `${row.plate} · ${row.id}`,
-                  }))
-                const activeCard = cards.get(value.id)
-                return (
-                  <>
-                    <h3 className="sm-subheading">Thông tin thuê bao</h3>
-                    <div className="sm-form-grid">
-                      <Field label="Khu đô thị" required>
-                        <Select
-                          aria-label="Khu đô thị thuê bao"
-                          disabled={!!value.id}
-                          value={value.estate}
-                          onChange={(event) =>
-                            change({
-                              estate: event.target.value,
-                              customerId: "",
-                              members: [],
-                              vehicleIds: [],
-                              lots: [
-                                { parkId: "", serviceId: "", active: true },
-                              ],
-                            })
-                          }
-                          options={[
-                            { value: "", label: "Chọn khu đô thị" },
-                            ...estateOptions,
-                          ]}
-                        />
-                      </Field>
-                      <Field label="Loại thuê bao" required>
-                        <Select
-                          aria-label="Loại thuê bao đăng ký"
-                          disabled={!!activeCard}
-                          value={value.type}
-                          onChange={(event) =>
-                            change({
-                              type: event.target.value,
-                              vehicleIds: [],
-                              noPlate: false,
-                              anyPlate: false,
-                              group: "",
-                              contract: "",
-                              contractEnd: "",
-                            })
-                          }
-                          options={["Thuê bao tháng", "VIP"]}
-                        />
-                      </Field>
-                      <EntityPicker
-                        label="Chủ thuê bao"
-                        required
-                        value={value.customerId}
-                        onChange={(customerId) =>
-                          change({
-                            customerId,
-                            members: value.members.filter(
-                              (id) => id !== customerId,
-                            ),
-                          })
-                        }
-                        options={customerOptions}
-                      />
-                      <div className="sm-selected-customer">
-                        <Users size={21} />
-                        <strong>
-                          {customers.get(value.customerId)?.name ||
-                            "Chọn hồ sơ khách hàng có sẵn"}
-                        </strong>
-                        <span>
-                          {customers.get(value.customerId)?.apartment ||
-                            "Chưa có thông tin căn hộ"}
-                        </span>
-                        <Button
-                          disabled={!value.estate}
-                          onClick={() => {
-                            setParentEditor(editor)
-                            open({
-                              kind: "customer",
-                              value: emptyCustomer(value.estate),
-                            })
-                          }}
-                        >
-                          <Plus size={13} />
-                          Tạo khách hàng mới
-                        </Button>
-                      </div>
-                      <Field label="Loại phương tiện" required>
-                        <Select
-                          aria-label="Loại phương tiện thuê bao"
-                          disabled={!!activeCard}
-                          value={value.vehicle}
-                          onChange={(event) =>
-                            change({
-                              vehicle: event.target.value,
-                              vehicleIds: [],
-                              lots: value.lots.map((lot) => ({
-                                ...lot,
-                                serviceId: "",
-                              })),
-                            })
-                          }
-                          options={vehicles}
-                        />
-                      </Field>
-                      {value.type === "Thuê bao tháng" && (
-                        <Field label="Nhóm thuê bao" required>
-                          <Select
-                            aria-label="Nhóm thuê bao đăng ký"
-                            value={value.group}
-                            onChange={(event) =>
-                              change({
-                                group: event.target.value,
-                                contract: "",
-                                contractEnd: "",
-                              })
-                            }
-                            options={[
-                              { value: "", label: "Chọn nhóm thuê bao" },
-                              ...customerGroups,
-                            ]}
-                          />
-                        </Field>
-                      )}
-                      <Field label="Hiệu lực từ" required>
-                        <Input
-                          type="date"
-                          aria-label="Hiệu lực thuê bao từ"
-                          value={value.from}
-                          onChange={(event) =>
-                            change({ from: event.target.value })
-                          }
-                        />
-                      </Field>
-                      <Field
-                        label="Hiệu lực đến"
-                        required={value.type === "Thuê bao tháng"}
-                        hint={
-                          value.type === "VIP"
-                            ? "Để trống nếu VIP không giới hạn thời gian."
-                            : undefined
-                        }
-                      >
-                        <Input
-                          type="date"
-                          aria-label="Hiệu lực thuê bao đến"
-                          min={value.from}
-                          value={value.to}
-                          onChange={(event) =>
-                            change({ to: event.target.value })
-                          }
-                        />
-                      </Field>
-                      {value.type === "Thuê bao tháng" &&
-                        value.group === "Gian hàng" && (
-                          <>
-                            <Field label="Số hợp đồng" required>
-                              <Input
-                                aria-label="Số hợp đồng thuê bao"
-                                maxLength={255}
-                                value={value.contract}
-                                onChange={(event) =>
-                                  change({ contract: event.target.value })
-                                }
-                              />
-                            </Field>
-                            <Field label="Hợp đồng đến" required>
-                              <Input
-                                type="date"
-                                aria-label="Hợp đồng thuê bao đến"
-                                value={value.contractEnd}
-                                onChange={(event) =>
-                                  change({ contractEnd: event.target.value })
-                                }
-                              />
-                            </Field>
-                          </>
-                        )}
-                    </div>
-                    {activeCard && (
-                      <p className="sm-note">
-                        Thuê bao đang có thẻ {activeCard.id}. Cần thu hồi thẻ
-                        trước khi đổi loại thuê bao hoặc loại phương tiện.
-                      </p>
-                    )}
-                    {value.type === "Thuê bao tháng" &&
-                      value.group === "Cư dân" && (
-                        <p className="sm-note">
-                          Căn hộ được lấy từ hồ sơ chủ thuê bao:{" "}
-                          <strong>
-                            {customers.get(value.customerId)?.apartment ||
-                              "Chưa có căn hộ — bổ sung trong hồ sơ Khách hàng."}
-                          </strong>
-                        </p>
-                      )}
-                    <h3 className="sm-subheading">Phương tiện sử dụng</h3>
-                    <label className="sm-check">
-                      <input
-                        type="checkbox"
-                        checked={
-                          value.type === "VIP" ? value.anyPlate : value.noPlate
-                        }
-                        onChange={(event) =>
-                          change(
-                            value.type === "VIP"
-                              ? {
-                                  anyPlate: event.target.checked,
-                                  vehicleIds: [],
-                                }
-                              : {
-                                  noPlate: event.target.checked,
-                                  vehicleIds: [],
-                                },
-                          )
-                        }
-                      />
-                      {value.type === "VIP"
-                        ? "VIP không giới hạn biển số"
-                        : "Xe không có biển số"}
-                    </label>
-                    {!value.anyPlate && !value.noPlate && (
-                      <>
-                        {value.type === "VIP" ? (
-                          <RelationChoices
-                            label="Xe của VIP"
-                            value={value.vehicleIds}
-                            onChange={(vehicleIds) => change({ vehicleIds })}
-                            options={vehicleOptions}
-                            max={10}
-                          />
-                        ) : (
-                          <EntityPicker
-                            label="Xe của thuê bao"
-                            required
-                            value={value.vehicleIds[0] || ""}
-                            onChange={(id) =>
-                              change({ vehicleIds: id ? [id] : [] })
-                            }
-                            options={vehicleOptions}
-                          />
-                        )}
-                        <Button
-                          className="sm-inline-add"
-                          disabled={
-                            !value.estate ||
-                            (value.type === "VIP" &&
-                              value.vehicleIds.length >= 10)
-                          }
-                          onClick={() => {
-                            setParentEditor(editor)
-                            open({
-                              kind: "vehicle",
-                              value: emptyVehicle(value.estate, value.vehicle),
-                            })
-                          }}
-                        >
-                          <CarFront size={14} />
-                          Tạo xe mới
-                        </Button>
-                      </>
-                    )}
-                    <h3 className="sm-subheading">Bãi xe và gói dịch vụ</h3>
-                    <div className="sm-lot-editor">
-                      {value.lots.map((lot, index) => (
-                        <div key={index}>
-                          <Field label={`Bãi xe ${index + 1}`} required>
-                            <Select
-                              aria-label={`Bãi xe thuê bao ${index + 1}`}
-                              value={lot.parkId}
-                              onChange={(event) =>
-                                change({
-                                  lots: value.lots.map((row, rowIndex) =>
-                                    rowIndex === index
-                                      ? {
-                                          ...row,
-                                          parkId: event.target.value,
-                                          serviceId: "",
-                                        }
-                                      : row,
-                                  ),
-                                })
-                              }
-                              options={[
-                                { value: "", label: "Chọn bãi xe" },
-                                ...managementParks
-                                  .filter(
-                                    (park) => park.estate === value.estate,
-                                  )
-                                  .map((park) => ({
-                                    value: park.id,
-                                    label: park.label,
-                                  })),
-                              ]}
-                            />
-                          </Field>
-                          <Field label="Gói dịch vụ" required>
-                            <Select
-                              aria-label={`Gói dịch vụ thuê bao ${index + 1}`}
-                              disabled={!lot.parkId}
-                              value={lot.serviceId}
-                              onChange={(event) =>
-                                change({
-                                  lots: value.lots.map((row, rowIndex) =>
-                                    rowIndex === index
-                                      ? {
-                                          ...row,
-                                          serviceId: event.target.value,
-                                        }
-                                      : row,
-                                  ),
-                                })
-                              }
-                              options={[
-                                {
-                                  value: "",
-                                  label: "Chọn gói Thuê bao đúng phương tiện",
-                                },
-                                ...directory.services
-                                  .filter(
-                                    (service) =>
-                                      service.vehicle === value.vehicle &&
-                                      service.category === "Thuê bao" &&
-                                      (service.active ||
-                                        service.id === lot.serviceId),
-                                  )
-                                  .map((service) => ({
-                                    value: service.id,
-                                    label: `${service.name} · ${fmt(service.price)} đ${
-                                      !service.active ? " · Đã ngừng" : ""
-                                    }`,
-                                  })),
-                              ]}
-                            />
-                          </Field>
-                          <label className="sm-check">
-                            <input
-                              type="checkbox"
-                              checked={lot.active}
-                              onChange={(event) =>
-                                change({
-                                  lots: value.lots.map((row, rowIndex) =>
-                                    rowIndex === index
-                                      ? { ...row, active: event.target.checked }
-                                      : row,
-                                  ),
-                                })
-                              }
-                            />
-                            Áp dụng
-                          </label>
-                          <Button
-                            variant="ghost"
-                            aria-label={`Bỏ bãi xe ${index + 1}`}
-                            disabled={value.lots.length <= 1}
-                            onClick={() =>
-                              change({
-                                lots: value.lots.filter(
-                                  (_, rowIndex) => rowIndex !== index,
-                                ),
-                              })
-                            }
-                          >
-                            <X size={15} />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                    <Button
-                      className="sm-inline-add"
-                      disabled={
-                        !value.estate ||
-                        value.lots.length >=
-                          managementParks.filter(
-                            (park) => park.estate === value.estate,
-                          ).length
-                      }
-                      onClick={() =>
-                        change({
-                          lots: [
-                            ...value.lots,
-                            { parkId: "", serviceId: "", active: true },
-                          ],
-                        })
-                      }
-                    >
-                      <Plus size={14} />
-                      Thêm bãi xe
-                    </Button>
-                    <h3 className="sm-subheading">
-                      Thành viên sử dụng thuê bao
-                    </h3>
-                    <RelationChoices
-                      label="Thành viên"
-                      value={value.members}
-                      onChange={(members) => change({ members })}
-                      options={customerOptions.filter(
-                        (option) => option.value !== value.customerId,
-                      )}
-                    />
-                    <Field label="Ghi chú">
-                      <Textarea
-                        aria-label="Ghi chú thuê bao"
-                        maxLength={500}
-                        value={value.note}
-                        onChange={(event) =>
-                          change({ note: event.target.value })
-                        }
-                      />
-                    </Field>
-                  </>
-                )
-              })()}
+            {editor.kind === "subscriber" && <SubscriberRegistration value={editor.value} state={state} onChange={change}
+              onCreateCustomer={()=>{setParentEditor(editor);open({kind:"customer",value:emptyCustomer(editor.value.estate)})}}
+              onEditCustomer={()=>{const customer=customers.get(editor.value.customerId);if(customer){setParentEditor(editor);open({kind:"customer",value:{...customer}})}}}
+              onCreateVehicle={()=>{setParentEditor(editor);open({kind:"vehicle",value:emptyVehicle(editor.value.estate,editor.value.vehicle)})}}
+              onCard={onCard}/>}
             {editor.kind === "issue" && issueSub && issueProfile && (
               <>
                 <div className="sm-card-panel">
@@ -2379,7 +1757,7 @@ export default function SubscriptionManagement({
                   />
                 </Field>
                 <p className="sm-note">
-                  Hủy là trạng thái cuối. Thao tác này không thu hồi thẻ về kho;
+                  Hủy là trạng thái cuối. Thao tác này không thu hồi thẻ về kho
                   thẻ đang lưu hành vẫn cần xử lý tại Quản lý thẻ.
                 </p>
                 <Field label="Lý do thay đổi" required>
@@ -2392,6 +1770,10 @@ export default function SubscriptionManagement({
                 </Field>
               </>
             )}
+            {(editor.kind === "customer" ||
+              editor.kind === "vehicle" ||
+              editor.kind === "service") &&
+              editor.value.id && <AuditInformation record={editor.value} />}
             {error && (
               <p className="sm-error" role="alert" ref={errorRef} tabIndex={-1}>
                 {error}

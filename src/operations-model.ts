@@ -1,8 +1,9 @@
-import { cardStatuses, cardTypes, estates, maxDate, normalize, today, vehicles } from "./data"
+import { cardStatuses, cardTypes, demoCardMetadata, estates, maxDate, normalize, today, vehicles } from "./data"
 import type { Card } from "./data"
 import { snapshot } from "./report-model"
-import { seedSubscriptionDirectory } from "./subscription-model"
+import { seedSubscriptionDirectory, synchronizeCustomerGroups } from "./subscription-model"
 import type { SubscriptionDirectory } from "./subscription-model"
+import { cardTechnologies } from "./vehicle-energy"
 
 export { cardStatuses } from "./data"
 export const operationMenus = [
@@ -28,7 +29,7 @@ export const operationMenus = [
   },
   { id: "customers", group: "Khách hàng", title: "Khách hàng", description: "Quản lý hồ sơ khách hàng dùng chung cho các thuê bao." },
   { id: "vehicles", group: "Quản lý xe", title: "Danh sách xe", description: "Quản lý phương tiện và các thuê bao đang sử dụng xe." },
-  { id: "services", group: "Dịch vụ", title: "Danh sách dịch vụ", description: "Quản lý gói dịch vụ, chế độ kiểm soát và giá theo bãi xe." },
+  { id: "services", group: "Dịch vụ", title: "Danh sách dịch vụ", description: "Quản lý dịch vụ theo bãi xe, loại phương tiện và chế độ kiểm soát." },
   {
     id: "handoffs",
     group: "Quản lý thẻ",
@@ -41,7 +42,7 @@ export const operationMenus = [
     group: "Quản lý thẻ",
     title: "Tra cứu thẻ",
     description:
-      "Tìm thẻ, xem lịch sử, khóa / mở khóa và thu hồi. Dữ liệu cập nhật theo thao tác trong phiên.",
+      "Tìm thẻ, chỉnh sửa thông tin, xem lịch sử, khóa / mở khóa và thu hồi. Dữ liệu cập nhật theo thao tác trong phiên.",
   },
   {
     id: "incidents",
@@ -76,6 +77,7 @@ export function warehouseBalances(cards: Card[]) {
   )
 }
 export interface Lot {
+  method?: "manual" | "excel"
   id: string
   park: string
   estate: string
@@ -135,7 +137,7 @@ export function seedOperations(): OperationState {
   const base = snapshot(maxDate).map((card) => card.status === "Trong kho" ? { ...card, subscription: "" } : card)
   const lots: Lot[] = []
   const added: Card[] = []
-  estates.forEach((e) =>
+  estates.forEach((e, ei) =>
     e.parks.forEach((park, pi) => {
       const id = `LO-${e.code}-2910-${pi + 1}`
       const ids = cardTypes.map((type, ti) => {
@@ -143,6 +145,7 @@ export function seedOperations(): OperationState {
         added.push({
           ...base[0],
           id: code,
+          ...demoCardMetadata(code, e.id, 90000 + ei * 1000 + pi * 4 + ti + 1, today, today, (ei + pi + ti) % 3),
           estate: e.id,
           park,
           type,
@@ -164,6 +167,21 @@ export function seedOperations(): OperationState {
         })
         return code
       })
+      // Subscription stock for motorbikes and bicycles: one Mifare and one Proximity monthly card per park.
+      for (const [vi, vehicle] of (["Xe máy", "Xe đạp"] as const).entries())
+        for (const [ki, technologyIndex] of [0, 1].entries()) {
+          const code = `${e.id}-NEW-${pi + 1}${vehicle === "Xe máy" ? "M" : "D"}${ki + 1}`
+          added.push({
+            ...base[0],
+            id: code,
+            ...demoCardMetadata(code, e.id, 95000 + ei * 1000 + pi * 10 + vi * 2 + ki, today, today, technologyIndex),
+            estate: e.id, park, type: "Thuê bao tháng", vehicle,
+            owner: "—", phone: "—", plate: "—", group: "—", apartment: "—",
+            subscription: "", issued: "", expiry: "", lastTrip: "", unused: 0, alerts: [],
+            batch: id, status: "Trong kho", times: 1,
+          })
+          ids.push(code)
+        }
       lots.push({
         id,
         estate: e.id,
@@ -238,13 +256,14 @@ export function seedOperations(): OperationState {
       reason: `Nhập lô ${c.batch} · ${c.park}.`,
     })),
   }
-  return { ...result, directory: seedSubscriptionDirectory(result.cards, result.subscriptions) }
+  return synchronizeCustomerGroups({ ...result, directory: seedSubscriptionDirectory(result.cards, result.subscriptions) })
 }
 interface ImportAction {
   kind: "import"
   lot: Lot
   type: string
   vehicle: string
+  details?: { id: string; frontCode?: string; rearCode?: string; technology?: string }[]
 }
 interface ActivateAction {
   kind: "activate"
@@ -345,21 +364,39 @@ export function applyOperation(
     if (state.lots.some((l) => normalize(l.id) === normalize(lot.id)))
       throw new Error("Mã lô đã tồn tại.")
     const ids = lot.ids.map(normalize)
+    const existingIds = new Set(state.cards.map((card) => normalize(card.id)))
+    if (!cardTypes.includes(action.type) || !vehicles.includes(action.vehicle))
+      throw new Error("Chọn loại thẻ và phương tiện hợp lệ.")
+    if (action.details) {
+      if (action.details.length !== lot.ids.length || action.details.some((row, index) =>
+        row.id.trim() !== lot.ids[index].trim() || !cardTechnologies.includes(row.technology as typeof cardTechnologies[number]) ||
+        [row.id, row.frontCode || "", row.rearCode || ""].some((value) => value.trim().length > 50) || /\s/.test(row.id.trim()),
+      )) throw new Error("Kiểm tra mã thẻ (tối đa 50 ký tự, không khoảng trắng), mã hai mặt và kiểu thẻ.")
+    }
     if (
       new Set(ids).size !== ids.length ||
       lot.ids.some(
         (id) =>
           !id.trim() ||
           id.length > 255 ||
-          state.cards.some((c) => normalize(c.id) === normalize(id)),
+          existingIds.has(normalize(id)),
       )
     )
       throw new Error("Danh sách có mã thẻ trùng hoặc không hợp lệ.")
     const template = state.cards[0]
     next.cards = [
-      ...lot.ids.map((id) => ({
+      ...lot.ids.map((id, index) => ({
         ...template,
         id: id.trim(),
+        unitId: "",
+        note: "",
+        createdAt: new Date().toISOString(),
+        createdBy: "Admin Local",
+        updatedAt: undefined,
+        updatedBy: undefined,
+        frontCode: action.details?.[index].frontCode?.trim() || "",
+        rearCode: action.details?.[index].rearCode?.trim() || "",
+        technology: action.details?.[index].technology || "",
         estate: lot.estate,
         park: lot.park,
         batch: lot.id,
@@ -385,7 +422,7 @@ export function applyOperation(
         cardId,
         at: `${today}T09:00:00`,
         title: "Nhập kho",
-        reason: `${lot.id} · ${lot.park}`,
+        reason: `${lot.id} · ${lot.park}${lot.method ? lot.method === "manual" ? " · Nhập trực tiếp" : " · Nhập từ Excel" : ""}`,
       }),
     )
   } else if (action.kind === "activate") {

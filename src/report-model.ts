@@ -15,6 +15,7 @@ import {
   vehicles,
 } from "./data"
 import type { Card, Filters, Threshold } from "./data"
+import { cardTechnologies, unknownTechnology } from "./vehicle-energy"
 
 interface State {
   status: string
@@ -75,6 +76,7 @@ export type ReportLookupSelection =
   | { kind: "circulation"; groupBy?: CirculationGrouping; group?: string; status?: CirculationStatus; estate?: string }
   | { kind: "alert"; id: number | "all" }
 export type CardLookupFilters = {
+  technology?: string[]
   mode: "current" | "snapshot" | "movement"
   keyword: string
   start: string
@@ -89,6 +91,7 @@ export type CardLookupFilters = {
   movement: (typeof movementKinds[number])[]
 }
 export const defaultCardLookupFilters: CardLookupFilters = {
+  technology: [],
   mode: "current",
   keyword: "",
   start: today,
@@ -111,7 +114,8 @@ export const lookupParkOptions = estates.flatMap((estate) => estate.parks.map((p
 const selected = (values: readonly string[], value: string) => !values.length || values.includes(value)
 const inLookupScope = (card: Card, f: CardLookupFilters, park = card.park) =>
   selected(f.estate, card.estate) && selected(f.park, lookupParkKey(card.estate, park)) &&
-  selected(f.type, card.type) && selected(f.vehicle, card.vehicle)
+  selected(f.type, card.type) && selected(f.vehicle, card.vehicle) &&
+  selected(f.technology || [], card.technology || unknownTechnology)
 export function lookupSelectionError(f: CardLookupFilters) {
   if (!f.statuses.length) return "Chọn ít nhất một trạng thái."
   if (f.group.length && f.type.length && !f.type.includes("Thuê bao tháng"))
@@ -474,10 +478,11 @@ export function lookupDateError(filters: CardLookupFilters) {
 }
 
 const lookupFields = ["mode", "keyword", "start", "end"] as const
-const lookupMultiFields = ["estate", "park", "type", "vehicle", "group", "alert", "movement"] as const
+const lookupMultiFields = ["estate", "park", "type", "vehicle", "technology", "group", "alert", "movement"] as const
 const lookupParam = (field: string) => `lookup${field[0].toUpperCase()}${field.slice(1)}`
 
 export function setCardLookupParams(params: URLSearchParams, filters: CardLookupFilters) {
+  params.delete("lookupEnergy")
   for (const field of ["metric", "circulation", "groupBy", "group", "usage", "alertGroup", "lookupSnapshotAt", "lookupStatus", "lookupUsage", "lookupStatuses"])
     params.delete(field)
   for (const field of lookupFields) {
@@ -487,7 +492,7 @@ export function setCardLookupParams(params: URLSearchParams, filters: CardLookup
   }
   for (const field of lookupMultiFields) {
     params.delete(lookupParam(field))
-    for (const value of field === "alert" ? normalizeLookupAlerts(filters.alert) : filters[field]) params.append(lookupParam(field), value)
+    for (const value of field === "alert" ? normalizeLookupAlerts(filters.alert) : filters[field] || []) params.append(lookupParam(field), value)
   }
   const statuses = normalizeLookupStatuses(filters.statuses)
   if (statuses.length !== lookupStatuses.length) params.set("lookupStatuses", statuses.join(","))
@@ -518,6 +523,7 @@ export function readCardLookupParams(params: URLSearchParams, reportFilters: Fil
     park,
     type: options(cardTypes, "type"),
     vehicle: options(vehicles, "vehicle"),
+    technology: options([...cardTechnologies, unknownTechnology], "technology"),
     statuses: params.has("lookupStatuses") ? normalizeLookupStatuses((params.get("lookupStatuses") || "").split(","))
       : legacyLookupStatuses(params.get("lookupStatus") || "", params.get("lookupUsage") || ""),
     group: options(customerGroups, "group"),
@@ -546,7 +552,7 @@ export function lookupSnapshotDay(filters: CardLookupFilters) {
 }
 
 export function matchesCardKeyword(card: Card, query: string) {
-  return !query || [card.id, card.owner, card.plate, card.subscription, card.batch].some((value) =>
+  return !query || [card.id, card.frontCode || "", card.rearCode || "", card.owner, card.plate, card.subscription, card.batch].some((value) =>
     normalize(value).includes(query),
   )
 }

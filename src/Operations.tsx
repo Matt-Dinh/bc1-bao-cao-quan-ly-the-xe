@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 import CardLookupFilterPanel from "./CardLookupFilterPanel"
+import CardImportRows from "./CardImportRows"
+import CardEditor from "./CardEditor"
+import { managementUnits } from "./subscription-model"
+import { checkCardImportRows, emptyImportRow } from "./card-import"
+import type { CardImportRow } from "./card-import"
+import { cardTechnologies, unknownTechnology } from "./vehicle-energy"
 import ColumnSettingsDrawer, { readColumnSelection } from "./ColumnSettingsDrawer"
 import {
   ArrowLeft,
@@ -19,6 +25,7 @@ import {
   Info,
   LockKeyhole,
   Package,
+  Pencil,
   Plus,
   ScanLine,
   Search,
@@ -117,15 +124,12 @@ const cardEventColumns = {
   before: "Trạng thái trước",
   after: "Trạng thái sau",
 }
-interface ImportRow {
-  id: string
-  error: string
-}
 interface RecordSelection {
   kind: "lot" | "handoff" | "incident"
   id: string
 }
 interface Editor {
+  technology: string
   kind: "import" | "subscription" | "handoff"
   parkKey: string
   supplier: string
@@ -179,7 +183,7 @@ export default function Operations({
   onBackToReport?: () => void
   focusCardId: string | null
   onFocused: () => void
-  onLookup: (filters: CardLookupFilters) => void
+  onLookup: (filters: CardLookupFilters, focusCardId?: string) => void
   onDirtyChange: (dirty: boolean) => void
   onNotify: (text: string) => void
   sharedState?: OperationState
@@ -204,8 +208,12 @@ export default function Operations({
   const [size, setSize] = useState(20)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [dirty, setDirty] = useState(false)
+  const [cardEdit, setCardEdit] = useState<{id:string;fromDetail:boolean}|null>(null)
+  const [cardEditDirty,setCardEditDirty]=useState(false)
   const [discard, setDiscard] = useState(false)
-  const [importRows, setImportRows] = useState<ImportRow[]>([])
+  const [importRows, setImportRows] = useState<CardImportRow[]>([])
+  const [importMethod, setImportMethod] = useState<"manual" | "excel">("manual")
+  const importDrafts = useRef<{ manual: CardImportRow[]; excel: CardImportRow[] }>({ manual: [emptyImportRow()], excel: [] })
   const [importStage, setImportStage] = useState(0)
   const [fileName, setFileName] = useState("")
   const [fileError, setFileError] = useState("")
@@ -236,10 +244,10 @@ export default function Operations({
     return () => clearTimeout(timer)
   }, [search])
   useEffect(() => {
-    onDirtyChange((!!editor && dirty) || actionDirty)
-  }, [editor, dirty, actionDirty, onDirtyChange])
+    onDirtyChange((!!editor && dirty) || actionDirty || cardEditDirty)
+  }, [editor, dirty, actionDirty, cardEditDirty, onDirtyChange])
   useEffect(() => {
-    const changed = (!!editor && dirty) || actionDirty
+    const changed = (!!editor && dirty) || actionDirty || cardEditDirty
     const handler = (e: BeforeUnloadEvent) => {
       if (changed) {
         e.preventDefault()
@@ -248,12 +256,14 @@ export default function Operations({
     }
     window.addEventListener("beforeunload", handler)
     return () => window.removeEventListener("beforeunload", handler)
-  }, [editor, dirty, actionDirty])
+  }, [editor, dirty, actionDirty, cardEditDirty])
   useEffect(() => {
     if (lastScreen.current !== screen) {
       const fromWarehouse =
         lastScreen.current === "inventory" && screen === "lookup"
       setEditor(null)
+      setCardEdit(null)
+      setCardEditDirty(false)
       setDirty(false)
       setAction(null)
       setDetailId(null)
@@ -290,6 +300,12 @@ export default function Operations({
       (c.estate === filteredPark.estate && c.park === filteredPark.park),
   )
   const actCard = state.cards.find((c) => c.id === action?.cardId)
+  const editingCard = state.cards.find(c=>c.id===cardEdit?.id)
+  function openCardEdit(card:Card) {
+    if(reportLookup) return
+    setCardEdit({id:card.id,fromDetail:detailId===card.id})
+    setDetailId(null)
+  }
   const subscription = state.subscriptions.find(
     (s) => s.id === editor?.replacement,
   )
@@ -411,6 +427,7 @@ export default function Operations({
     const c = replace ? state.cards.find((c) => c.id === replace.cardId) : null
     setEditor({
       kind,
+      technology: "",
       parkKey: selectedPark?.key || "",
       supplier: "",
       type:
@@ -437,7 +454,9 @@ export default function Operations({
       replacement: replace?.id || "",
     })
     setDirty(false)
-    setImportRows([])
+    setImportRows([emptyImportRow()])
+    setImportMethod("manual")
+    importDrafts.current = { manual: [emptyImportRow()], excel: [] }
     setImportStage(0)
     setFileName("")
     setFileError("")
@@ -540,24 +559,20 @@ export default function Operations({
           : "Đã mở khóa thẻ.",
       )
   }
-  function checkRows(ids: string[]) {
-    const seen = new Set<string>()
-    return ids.map((id) => {
-      const clean = id.trim(),
-        code = normalize(clean)
-      const error = !clean
-        ? "Mã thẻ không được để trống"
-        : clean.length > 255
-          ? "Mã thẻ tối đa 255 ký tự"
-          : state.cards.some((c) => normalize(c.id) === code)
-            ? "Mã thẻ đã tồn tại trong hệ thống"
-            : seen.has(code)
-              ? "Trùng mã trong tệp tải lên"
-              : ""
-      seen.add(code)
-      return { id: clean, error }
-    })
+  function checkRows(rows: (string | CardImportRow)[]) {
+    return checkCardImportRows(rows.map((row) => typeof row === "string" ? { ...emptyImportRow(), id: row } : row), state.cards, editor?.technology || "")
   }
+  function switchImportMethod(method: "manual" | "excel") {
+    if (method === importMethod) return
+    importDrafts.current[importMethod] = importRows
+    setImportRows(checkRows(importDrafts.current[method]))
+    setImportMethod(method)
+    setFileError("")
+    setDirty(true)
+  }
+  useEffect(() => {
+    if (editor?.kind === "import") setImportRows((rows) => checkCardImportRows(rows, state.cards, editor.technology))
+  }, [editor?.technology, state.cards])
   async function readFile(file?: File) {
     if (!file) return
     setFileError("")
@@ -580,7 +595,7 @@ export default function Operations({
         book = XLSX.read(data, { type: "array" })
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
         book.Sheets[book.SheetNames[0]],
-        { defval: "" },
+        { defval: "", raw: false },
       )
       if (!rows.length || !Object.keys(rows[0]).includes("Mã thẻ"))
         throw new Error("Tệp cần có cột “Mã thẻ” và ít nhất một dòng dữ liệu.")
@@ -588,7 +603,10 @@ export default function Operations({
         throw new Error(
           "Mỗi lần nhập tối đa 10.000 mã thẻ. Vui lòng chia nhỏ tệp.",
         )
-      setImportRows(checkRows(rows.map((r) => String(r["Mã thẻ"]))))
+      setImportRows(checkRows(rows.map((r) => ({
+        id: String(r["Mã thẻ"]), frontCode: String(r["Mã thẻ mặt trước"] || ""),
+        rearCode: String(r["Mã thẻ mặt sau"] || ""), technology: String(r["Kiểu thẻ"] || ""), error: "",
+      }))))
       setFileName(file.name)
       setDirty(true)
     } catch (e) {
@@ -646,27 +664,37 @@ export default function Operations({
     setScanError("")
     setDirty(true)
   }
-  function saveEditor() {
+  function saveEditor(another = false) {
     if (!editor || !park) return
     setActionError("")
     if (editor.kind === "import") {
-      const ids = importRows.filter((r) => !r.error).map((r) => r.id)
-      commit(
+      const valid = checkRows(importRows).filter((row) => !row.error)
+      const ids = valid.map((row) => row.id)
+      const saved = commit(
         {
           kind: "import",
           lot: {
+            method: importMethod,
             id: `LO-20261029-${String(state.lots.length + 1).padStart(3, "0")}`,
             estate: park.estate,
             park: park.park,
-            supplier: editor.supplier.trim(),
+            supplier: editor.supplier.trim() || "Không ghi nhận",
             date: today,
             ids,
           },
           type: editor.type,
           vehicle: editor.vehicle,
+          details: valid.map((row) => ({ ...row, technology: row.technology || editor.technology })),
         },
         `Đã nhập ${ids.length} thẻ hợp lệ vào kho ${park.park}.`,
       )
+      if (saved && another) {
+        setEditor({ ...editor })
+        setImportRows([emptyImportRow()])
+        importDrafts.current.manual = [emptyImportRow()]
+        setImportStage(0)
+        setDirty(false)
+      }
     } else if (editor.kind === "handoff") {
       commit(
         {
@@ -814,8 +842,11 @@ export default function Operations({
     ...(lookupMode !== "current" ? ["expiry", "alerts"] : []),
   ]
   const lookupColumnNames: Record<string, string> = {
+    frontCode: "Mã thẻ mặt trước", rearCode: "Mã thẻ mặt sau", technology: "Kiểu thẻ",
+    unitId:"Đơn vị",note:"Mô tả",createdBy:"Người tạo",createdAt:"Ngày tạo",updatedBy:"Người cập nhật",updatedAt:"Cập nhật cuối",
     ...columnNames,
     park: "Kho bãi",
+    vehicle: "Loại phương tiện",
     plate: "Biển số",
     group: "Nhóm khách hàng",
     status: lookupMode === "current" ? "Trạng thái" : "Trạng thái tại ngày đến",
@@ -830,6 +861,9 @@ export default function Operations({
       case "estate": return estates.find((estate) => estate.id === card.estate)?.name || "—"
       case "park": return <>{event?.park ?? card.park}<span className="estate-code">{estates.find((estate) => estate.id === card.estate)?.short}</span></>
       case "type": return <span className={card.type === "VIP" ? "vip-label" : ""}>{card.type}</span>
+      case "technology": return card.technology || unknownTechnology
+      case "unitId": return managementUnits.find(u=>u.id===card.unitId)?.name || "—"
+      case "createdAt": case "updatedAt": return card[column] ? new Date(card[column]!).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"}) : "Chưa ghi nhận"
       case "status": {
         const status = lookupCardStatus(card, lookupResult?.asOf ?? today)
         return <Badge tone={status === "Hết hạn" ? "amber" : statusTone(status)}>{status}</Badge>
@@ -849,7 +883,7 @@ export default function Operations({
   }
   const title = editor
     ? editor.kind === "import"
-      ? "Nhập kho thẻ theo lô"
+      ? "Nhập kho thẻ"
       : editor.kind === "handoff"
         ? "Giao thẻ cho bàn thẻ"
         : editor.replacement
@@ -1099,9 +1133,17 @@ export default function Operations({
                   isCardList
                     ? cardRows.map(({ card: c, event }) => ({
                         "Mã thẻ": c.id,
+                        "Mã thẻ mặt trước": c.frontCode || "", "Mã thẻ mặt sau": c.rearCode || "",
+                        "Kiểu thẻ": c.technology || unknownTechnology,
+                        "Đơn vị": managementUnits.find(u=>u.id===c.unitId)?.name || "",
+                        "Mô tả": c.note || "",
+                        "Người tạo": c.createdBy || "",
+                        "Ngày tạo": c.createdAt ? new Date(c.createdAt).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"}) : "",
+                        "Người cập nhật": c.updatedBy || "",
+                        "Cập nhật cuối": c.updatedAt ? new Date(c.updatedAt).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"}) : "",
                         "Kho bãi": event?.park ?? c.park,
                         "Loại thẻ": c.type,
-                        "Phương tiện": c.vehicle,
+                        "Loại phương tiện": c.vehicle,
                         "Chủ thẻ": c.owner,
                         "Biển số": c.plate,
                         ...(event ? {
@@ -1434,6 +1476,7 @@ export default function Operations({
                                   >
                                     <ChevronRight size={15} />
                                   </Button>
+                                  {!reportLookup && <Button variant="ghost" title="Chỉnh sửa thông tin thẻ" aria-label={`Chỉnh sửa thẻ ${c.id}`} onClick={()=>openCardEdit(c)}><Pencil size={14}/></Button>}
                                   {!reportLookup && c.status === "Đang hoạt động" && (
                                     <Button
                                       variant="ghost"
@@ -1687,7 +1730,7 @@ export default function Operations({
                 <div className="op-stepper">
                   <span className={importStage === 0 ? "current" : "done"}>
                     <span>{importStage ? <Check size={13} /> : "1"}</span>Thông
-                    tin & tệp nhập
+                    tin & danh sách thẻ
                   </span>
                   <span className="step-line" />
                   <span className={importStage === 1 ? "current" : ""}>
@@ -1701,7 +1744,7 @@ export default function Operations({
                         <span className="op-section-icon">
                           <Warehouse size={20} />
                         </span>
-                        <Heading level={3}>Thông tin lô nhập</Heading>
+                        <Heading level={3}>Thông tin phiếu nhập</Heading>
                         <p>
                           Thẻ được nhập trực tiếp vào kho của bãi nhận, ở trạng
                           thái Trong kho.
@@ -1709,7 +1752,7 @@ export default function Operations({
                       </div>
                       <div className="op-field-grid">
                         {parkField}
-                        <Field label="Nhà cung cấp" required>
+                        <Field label="Nhà cung cấp" required={importMethod === "excel"} hint={importMethod === "manual" ? "Có thể để trống khi nhập thẻ lẻ." : undefined}>
                           <Input
                             maxLength={255}
                             value={editor.supplier}
@@ -1731,6 +1774,11 @@ export default function Operations({
                             options={vehicles}
                           />
                         </Field>
+                        <Field label="Kiểu thẻ chung" hint="Áp dụng cho dòng chưa chọn kiểu thẻ riêng.">
+                          <Select aria-label="Kiểu thẻ chung" value={editor.technology}
+                            onChange={(e) => set("technology", e.target.value)}
+                            options={[{ value: "", label: "Chọn kiểu thẻ" }, ...cardTechnologies]} />
+                        </Field>
                       </div>
                     </section>
                     <section className="panel op-form-section">
@@ -1740,11 +1788,17 @@ export default function Operations({
                         </span>
                         <Heading level={3}>Danh sách mã thẻ</Heading>
                         <p>
-                          Mã thẻ phải duy nhất trong hệ thống. Tệp mẫu gồm một
-                          cột “Mã thẻ”.
+                          Mã thẻ phải duy nhất trong hệ thống. Mã mặt trước và mặt sau là thông tin đối chiếu, có thể để trống.
                         </p>
                       </div>
                       <div className="op-upload-section">
+                        <div className="op-review-tabs" aria-label="Cách nhập thẻ">
+                          <Button disabled={fileBusy} className={importMethod === "manual" ? "selected" : ""} onClick={() => switchImportMethod("manual")}>Nhập trực tiếp</Button>
+                          <Button disabled={fileBusy} className={importMethod === "excel" ? "selected" : ""} onClick={() => switchImportMethod("excel")}>Nhập từ Excel</Button>
+                        </div>
+                        {importMethod === "manual" ? <CardImportRows rows={importRows} onChange={(rows) => {
+                          setImportRows(checkRows(rows)); setDirty(true)
+                        }} /> : <>
                         <div
                           className="op-dropzone"
                           onDragOver={(e) => e.preventDefault()}
@@ -1792,8 +1846,8 @@ export default function Operations({
                             variant="link"
                             onClick={() =>
                               workbook("MauNhapKho", [
-                                { "Mã thẻ": "THE-NEW-0001" },
-                                { "Mã thẻ": "THE-NEW-0002" },
+                                { "Mã thẻ": "0000001001", "Mã thẻ mặt trước": "00001", "Mã thẻ mặt sau": "00101", "Kiểu thẻ": "Thẻ Mifare" },
+                                { "Mã thẻ": "0000001002", "Mã thẻ mặt trước": "00002", "Mã thẻ mặt sau": "00102", "Kiểu thẻ": "Thẻ Proximity" },
                               ])
                             }
                           >
@@ -1819,6 +1873,7 @@ export default function Operations({
                             Dùng dữ liệu minh họa
                           </Button>
                         </div>
+                        </>}
                       </div>
                     </section>
                   </>
@@ -1826,14 +1881,14 @@ export default function Operations({
                   <section className="panel op-review">
                     <div className="panel-heading">
                       <div>
-                        <Heading>Kết quả kiểm tra tệp dữ liệu</Heading>
+                        <Heading>Kết quả kiểm tra danh sách thẻ</Heading>
                         <span className="muted">
-                          {fileName} · {park?.label} · {editor.supplier}
+                          {importMethod === "manual" ? "Nhập trực tiếp" : fileName} · {park?.label} · {editor.supplier || "Không ghi nhận nhà cung cấp"}
                         </span>
                       </div>
                       <Button onClick={() => setImportStage(0)}>
                         <ArrowLeft size={14} />
-                        Chọn lại tệp
+                        Sửa danh sách
                       </Button>
                     </div>
                     <div className="op-validation-grid">
@@ -1900,6 +1955,7 @@ export default function Operations({
                           <tr>
                             <th>STT</th>
                             <th>Mã thẻ</th>
+                            <th>Mã mặt trước</th><th>Mã mặt sau</th><th>Kiểu thẻ</th>
                             <th>Kiểm tra</th>
                             <th>Chi tiết phân tích</th>
                           </tr>
@@ -1916,6 +1972,7 @@ export default function Operations({
                               <tr key={r.index}>
                                 <td>{r.index}</td>
                                 <td>{r.id || "—"}</td>
+                                <td>{r.frontCode || "—"}</td><td>{r.rearCode || "—"}</td><td>{r.technology || editor.technology || "Chưa chọn"}</td>
                                 <td>
                                   <Badge tone={r.error ? "red" : "green"}>
                                     {r.error ? "Lỗi dữ liệu" : "Hợp lệ"}
@@ -2372,7 +2429,7 @@ export default function Operations({
                     variant="primary"
                     disabled={
                       !park ||
-                      !editor.supplier.trim() ||
+                      (importMethod === "excel" && !editor.supplier.trim()) ||
                       !importRows.length ||
                       fileBusy
                     }
@@ -2382,6 +2439,9 @@ export default function Operations({
                     <ArrowRight size={15} />
                   </Button>
                 ) : (
+                  <>
+                  {editor.kind === "import" && importMethod === "manual" && <Button
+                    disabled={!importRows.some((row) => !row.error)} onClick={() => saveEditor(true)}>Lưu và thêm tiếp</Button>}
                   <Button
                     variant="primary"
                     disabled={
@@ -2393,11 +2453,12 @@ export default function Operations({
                             !editor.recipient.trim() ||
                             !selected.length
                     }
-                    onClick={saveEditor}
+                    onClick={() => saveEditor()}
                   >
                     <Check size={15} />
                     {editTitle}
                   </Button>
+                  </>
                 )}
               </div>
             </div>
@@ -2531,6 +2592,8 @@ export default function Operations({
                 <Warehouse size={14} />
                 Kho quản lý: {detail.park}
               </span>
+              {!reportLookup && <Button onClick={()=>openCardEdit(detail)}><Pencil size={14}/>Chỉnh sửa</Button>}
+              {reportLookup && <Button onClick={()=>{onLookup({...defaultCardLookupFilters,keyword:detail.id});setDetailId(null)}}>Xem thẻ hiện tại</Button>}
               {!reportLookup && detail.status === "Đang hoạt động" && (
                 <Button onClick={() => openAction("lock", detail)}>
                   <LockKeyhole size={14} />
@@ -2597,6 +2660,16 @@ export default function Operations({
             <div className="detail-grid">
               {[
                 ["Mã thẻ", detail.id],
+                ["Mã thẻ mặt trước", detail.frontCode || "Chưa có thông tin"],
+                ["Mã thẻ mặt sau", detail.rearCode || "Chưa có thông tin"],
+                ["Kiểu thẻ", detail.technology || unknownTechnology],
+                ["Loại thẻ", detail.type], ["Loại phương tiện", detail.vehicle],
+                ["Đơn vị", managementUnits.find(u=>u.id===detail.unitId)?.name || "Chưa có thông tin"],
+                ["Mô tả", detail.note || "—"],
+                ["Người tạo", detail.createdBy || "Chưa ghi nhận"],
+                ["Ngày tạo", detail.createdAt ? new Date(detail.createdAt).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"}) : "Chưa ghi nhận"],
+                ["Người cập nhật", detail.updatedBy || "Chưa ghi nhận"],
+                ["Cập nhật cuối", detail.updatedAt ? new Date(detail.updatedAt).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"}) : "Chưa ghi nhận"],
                 ["Trạng thái tra cứu", detailStatus],
                 ["Kho bãi", detail.park],
                 [
@@ -2651,6 +2724,9 @@ export default function Operations({
           )}
         </Overlay>
       )}
+      {cardEdit && editingCard && !reportLookup && <CardEditor key={editingCard.id} card={editingCard} state={state} onDirty={setCardEditDirty}
+        onClose={()=>{if(cardEdit.fromDetail)setDetailId(cardEdit.id);setCardEdit(null);setCardEditDirty(false)}}
+        onSave={next=>{setState(next);setDetailId(editingCard.id);setDetailTab("Thông tin thẻ");setCardEdit(null);setCardEditDirty(false);onNotify("Đã cập nhật thông tin thẻ và ghi lịch sử thay đổi.")}}/>}
       {action && (
         <Overlay
           title={
@@ -3007,6 +3083,7 @@ export default function Operations({
                     ? [
                         ["Kho bãi", item.park],
                         ["Nhà cung cấp", item.supplier],
+                        ["Cách nhập", item.method === "manual" ? "Nhập trực tiếp" : item.method === "excel" ? "Nhập từ Excel" : "Theo lô"],
                       ]
                     : "recipient" in item
                       ? [
@@ -3042,7 +3119,11 @@ export default function Operations({
                       const c = state.cards.find((c) => c.id === id)!
                       return (
                         <tr key={id}>
-                          <td>{id}</td>
+                          <td>{record.kind === "lot" ? <Button variant="link" aria-label={`Tra cứu thẻ ${id}`}
+                            title="Xem chi tiết thẻ tại Tra cứu thẻ" onClick={() => {
+                              setRecord(null)
+                              onLookup({...defaultCardLookupFilters,keyword:id},id)
+                            }}>{id}</Button> : id}</td>
                           <td>{c.park}</td>
                           <td>{c.type}</td>
                           <td>{c.vehicle}</td>

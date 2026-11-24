@@ -39,12 +39,13 @@ export function Input(
     ref?: Ref<HTMLInputElement>
   },
 ) {
-  if (props.type === "date") {
+  if (props.type === "date" || props.type === "datetime-local") {
     const value = String(props.value || "")
+    const [day, time] = value.split("T")
     return (
       <div className={`input date-input ${props.className || ""}`}>
         <span aria-hidden="true">
-          {value ? value.split("-").reverse().join("/") : props.placeholder || "dd/mm/yyyy"}
+          {value ? `${day.split("-").reverse().join("/")}${time ? ` ${time}` : ""}` : props.placeholder || (props.type === "datetime-local" ? "dd/mm/yyyy hh:mm" : "dd/mm/yyyy")}
         </span>
         {createElement("input", {
           ...props,

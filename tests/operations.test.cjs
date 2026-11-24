@@ -22,6 +22,26 @@ const activeCard = (state) =>
     (c) => c.status === "Đang hoạt động" && c.type === "Thuê bao tháng",
   )
 
+test("direct imports preserve both printed codes and technology while cards retain the three main vehicle groups", () => {
+  const state = seedOperations()
+  const details = [{ id: "00000001", frontCode: "00001", rearCode: "00000002", technology: "Thẻ Mifare" }]
+  const action = { kind: "import", lot: { id: "PN-TEST", estate: "A", park: estates[0].parks[0], supplier: "Không ghi nhận", date: today, ids: [details[0].id] }, type: "Vãng lai", vehicle: "Ô tô", details }
+  const next = applyOperation(state, action)
+  assert.equal(next.cards[0].id, "00000001")
+  assert.equal(next.cards[0].frontCode, "00001")
+  assert.equal(next.cards[0].rearCode, "00000002")
+  assert.equal(next.cards[0].technology, "Thẻ Mifare")
+  assert.equal(next.cards[0].status, "Trong kho")
+  assert.equal("energies" in next.cards[0], false)
+  assert.equal(next.cards[0].vehicle, "Ô tô")
+  assert.equal(next.lots[0].ids.length, 1)
+  assert.equal(next.activity[0].cardId, details[0].id)
+  assert.equal(state.cards.some((row) => row.id === details[0].id), false)
+  assert.throws(() => applyOperation(next, action), /đã tồn tại/)
+  assert.throws(() => applyOperation(state, { ...action, details: [{ ...details[0], technology: "Unknown" }] }), /kiểu thẻ/)
+  assert.throws(() => applyOperation(state, { ...action, details: [{ ...details[0], technology: "Thẻ UHF" }] }), /kiểu thẻ/)
+})
+
 test("only four states; every card belongs to a parking warehouse", () => {
   const state = seedOperations()
   assert.equal(cardStatuses.length, 4)

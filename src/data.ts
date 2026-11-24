@@ -122,6 +122,15 @@ export const percent = (n: number, digits = 1) =>
     : "—"
 export const normalize = (s: string) => s.toUpperCase().replace(/[.\-\s]/g, "")
 export type Card = {
+  unitId?: string
+  note?: string
+  createdAt?: string
+  createdBy?: string
+  updatedAt?: string
+  updatedBy?: string
+  frontCode?: string
+  rearCode?: string
+  technology?: string
   id: string
   estate: string
   park: string
@@ -141,6 +150,20 @@ export type Card = {
   unused: number
   alerts: number[]
   times: number
+}
+/** Deterministic demo metadata; never used to fill real imports or edited cards. */
+export function demoCardMetadata(id: string, estate: string, serial: number, createdDay: string, updatedDay = createdDay, technologyIndex = serial + Math.floor(serial / 3)) {
+  return {
+    frontCode: String(10000000 + serial).padStart(10, "0"),
+    rearCode: String(80000000 + serial).padStart(10, "0"),
+    technology: ["Thẻ Mifare", "Thẻ Proximity"][technologyIndex % 2],
+    unitId: `BQL-${estate}`,
+    note: `Thẻ mẫu ${id}, quản lý tại ${estates.find(item => item.id === estate)?.name || estate}.`,
+    createdAt: `${createdDay}T08:00:00+07:00`,
+    createdBy: "Nguyễn Văn Hùng",
+    updatedAt: `${updatedDay}T08:15:00+07:00`,
+    updatedBy: "Admin Local",
+  }
 }
 const names = [
   "Nguyễn Minh Anh",
@@ -186,10 +209,10 @@ export const cards: Card[] = estates.flatMap((e, ei) => {
           : i < e.locked
             ? "Khóa"
             : "Đang hoạt động"
+      const id = `${e.id}-${i % 3 === 1 ? "XM" : "OT"}-${String(i + 1).padStart(5, "0")}`
       return {
-        id: `${e.id}-${
-          i % 3 === 1 ? "XM" : "OT"
-        }-${String(i + 1).padStart(5, "0")}`,
+        id,
+        ...demoCardMetadata(id, e.id, ei * 10000 + i + 1, "2026-09-01", maxDate),
         estate: e.id,
         park:
           inStock || lost
@@ -258,7 +281,7 @@ export function filterCards(
       (!f.alert || c.alerts.includes(Number(f.alert) - 1)) &&
       (!f.expiry || (!!c.expiry && c.expiry <= f.expiry)) &&
       (q.length < 3 ||
-        [c.id, c.plate, c.subscription].some((v) => normalize(v).includes(q))),
+        [c.id, c.frontCode || "", c.rearCode || "", c.plate, c.subscription].some((v) => normalize(v).includes(q))),
   )
 }
 export const columnNames: Record<string, string> = {

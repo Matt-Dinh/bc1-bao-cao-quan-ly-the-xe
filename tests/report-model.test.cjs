@@ -1,5 +1,6 @@
 const test = require("node:test")
 const assert = require("node:assert/strict")
+const { checkCardImportRows } = require("/tmp/vparking-model-tests/card-import.js")
 const {
   defaults,
   estates,
@@ -741,4 +742,44 @@ test("loss splits and history stay consistent with the selected period", () => {
       (e) => e.at.slice(0, 10) <= "2026-10-06",
     ),
   )
+})
+
+test("card technology filters and printed codes retain values through links without electric vehicle classification", () => {
+  const base = snapshot(defaults.end)[0]
+  const rows = [
+    { ...base, id: "NEW", status: "Đang hoạt động", expiry: "", frontCode: "000123", rearCode: "000456", technology: "Thẻ Proximity" },
+    { ...base, id: "OLD", status: "Đang hoạt động", expiry: "", technology: undefined },
+    { ...base, id: "STOCK", status: "Trong kho", expiry: "", technology: "Thẻ Mifare" },
+  ]
+  const filter = { ...defaultCardLookupFilters, technology: ["Thẻ Proximity"] }
+  const params = new URLSearchParams()
+  setCardLookupParams(params, filter)
+  const restored = readCardLookupParams(params, defaults)
+  assert.deepEqual(restored, filter)
+  assert.deepEqual(lookupCards(restored, undefined, rows).cards.map((row) => row.id), ["NEW"])
+  assert.deepEqual(lookupCards({ ...filter, keyword: "000456" }, undefined, rows).cards.map((row) => row.id), ["NEW"])
+  assert.equal("energy" in restored, false)
+  const legacy = new URLSearchParams("lookupEnergy=Điện")
+  const migrated = readCardLookupParams(legacy, defaults)
+  assert.deepEqual(lookupCards(migrated, undefined, rows).cards.map((row) => row.id), ["NEW", "OLD", "STOCK"])
+  setCardLookupParams(legacy, migrated)
+  assert.equal(legacy.has("lookupEnergy"), false)
+})
+
+test("manual and Excel rows share validation while preserving printed codes and leading zeroes", () => {
+  const rows = [
+    { id: "000001", frontCode: "00002", rearCode: "00003", error: "" },
+    { id: "000001", technology: "Thẻ UHF", error: "" },
+    { id: "A B", error: "" },
+    { id: "000004", technology: "Unknown", error: "" },
+  ]
+  const checked = checkCardImportRows(rows, [], "Thẻ Mifare")
+  assert.equal(checked[0].error, "")
+  assert.equal(checked[0].id, "000001")
+  assert.equal(checked[0].frontCode, "00002")
+  assert.match(checked[1].error, /Trùng mã/)
+  assert.match(checked[2].error, /khoảng trắng/)
+  assert.match(checked[3].error, /kiểu thẻ/)
+  assert.match(checkCardImportRows([rows[0]], [{ id: "000001" }], "Thẻ Mifare")[0].error, /đã tồn tại/)
+  assert.match(checkCardImportRows([rows[0]], [], "")[0].error, /kiểu thẻ/)
 })

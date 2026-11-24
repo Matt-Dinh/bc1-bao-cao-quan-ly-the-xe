@@ -95,6 +95,7 @@ import {
 } from "./parking-model"
 import type { ParkingAccess, ParkingScreen, Role } from "./parking-model"
 import { operationMenus, seedOperations } from "./operations-model"
+import { withDemoScenarios } from "./demo-scenarios"
 import type { OperationScreen } from "./operations-model"
 import {
   cardHistory,
@@ -260,7 +261,7 @@ function App() {
   const [toast, setToast] = useState("")
   const parkingModel = useParking(parkingAccess, setToast)
   const revenueModel = useRevenueState(setToast)
-  const [cardOperations, setCardOperations] = useState(seedOperations)
+  const [cardOperations, setCardOperations] = useState(()=>withDemoScenarios(seedOperations()))
   const [notifications, setNotifications] = useState(false)
   const [help, setHelp] = useState(false)
   const [mobile, setMobile] = useState(false)
@@ -527,9 +528,10 @@ function App() {
     setLookupFromReport(true)
     window.scrollTo(0, 0)
   }
-  function openWarehouseLookup(filters: CardLookupFilters) {
+  function openWarehouseLookup(filters: CardLookupFilters, focusCardId?: string) {
     chooseOperation("lookup")
     setLookupFilters(filters)
+    if (focusCardId) setOperationFocus(focusCardId)
   }
   function openManagedCard(card: Card, subscriberId: string) {
     chooseOperation("lookup")

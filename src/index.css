@@ -127,6 +127,11 @@
 .op-stepper .done { color: var(--color-green); }
 .step-line { width: 80px; height: 1px; background: var(--color-border); }
 .op-upload-section { display: flex; flex-direction: column; gap: 13px; }
+.op-manual-cards { min-width: 0; }
+.op-manual-cards > p { font-size: 12px; margin-bottom: 12px; line-height: 1.7; }
+.op-manual-cards > .button { margin-top: 12px; }
+.op-manual-cards .data-table { min-width: 780px; }
+.op-manual-cards .data-table .input { min-width: 135px; }
 .op-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 215px; border: 1px dashed var(--color-border); background: var(--color-canvas); border-radius: 8px; gap: 10px; text-align: center; padding: 22px; }
 .op-dropzone h3 { font-size: 12px; }
 .op-dropzone .muted { font-size: 10px; }
