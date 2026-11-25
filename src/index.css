@@ -2,6 +2,7 @@
 @import 'tailwindcss';
 @import './report-dashboard.css';
 @import './parking.css';
+@import './revenue.css';
 
 @theme {
   --color-brand: #e52546;
@@ -47,7 +48,11 @@
 .lookup-result-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; }
 .lookup-table-toolbar > .button { margin-left: auto; }
 .filter-grid.lookup-filter-primary { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.filter-grid.config-filter-grid { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr); }
 .lookup-filter-row { margin-top: 12px; }
+@media (max-width: 760px) {
+  .filter-grid.config-filter-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .panel.lookup-filter-panel { overflow: visible; }
 .lookup-status-field { position: relative; grid-column: span 2; min-width: 0; }
 .lookup-multi-field { grid-column: auto; }

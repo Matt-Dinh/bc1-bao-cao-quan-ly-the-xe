@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react"
 import type { ReactNode } from "react"
-import { ArrowDown, ArrowUp, ArrowUpDown, ChartNoAxesCombined, ChevronLeft, ChevronRight, Download, ListFilter, LoaderCircle, Search } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChartNoAxesCombined, ChevronLeft, ChevronRight, Download, Info, ListFilter, LoaderCircle, Search } from "lucide-react"
 import { Button, Field, Form, Heading, Input, Select } from "./ui"
 import ReportPeriodFields from "./ReportPeriodFields"
 import CardLookupMultiFilter from "./CardLookupMultiFilter"
+import LookupFilterPanel, { lookupMatchHint } from "./LookupFilterPanel"
 import { tripLookupScope, tripLookupScopeKeys, tripLookupValue, tripLookupValues } from "./parking-lookup"
 import { date, estates, fmt } from "./data"
 import { allowedSites, defaultParkingFilters, hasLookupHours, parkingVehicles, periodError, tripLookupMode } from "./parking-model"
 import type { ParkingAccess, ParkingFilters } from "./parking-model"
+import { behaviorVehicles } from "./behavior-model"
 
 export const numberText = (value: number | null | undefined, digits = 0) =>
   value == null
@@ -54,11 +56,13 @@ export function ParkingHeading({
   title,
   group,
   cutoff,
+  description,
   actions,
 }: {
   title: string
   group: string
   cutoff: string
+  description?: string
   actions?: ReactNode
 }) {
   return (
@@ -72,10 +76,10 @@ export function ParkingHeading({
         <div>
           <Heading level={1}>{title}</Heading>
           <p className="page-description">
-            Dữ liệu minh họa · Số liệu tính đến 23:59:59 {date(cutoff)} · GMT+7
+            {description ?? `Dữ liệu minh họa · Số liệu tính đến 23:59:59 ${date(cutoff)} · GMT+7`}
           </p>
         </div>
-        {actions && <div className="parking-actions">{actions}</div>}
+        {actions && <div className="parking-actions op-heading-actions">{actions}</div>}
       </div>
     </>
   )
@@ -128,10 +132,9 @@ export function ParkingFiltersBar({
     }
     return next
   })
-  function submit() {
-    if (!manual || datesError || lookupError || loading) return
-    const keys = [...new Set([...(lookup ? tripLookupScopeKeys : []), ...(lookup?.params.keys() ?? []), ...lookupDraft.keys()])]
-    change({ ...draft, ...Object.fromEntries(keys.map((key) => [key, lookupDraft.get(key)])) })
+  function apply(next = draft, nextLookup = lookupDraft) {
+    const keys = [...new Set([...(lookup ? tripLookupScopeKeys : []), ...(lookup?.params.keys() ?? []), ...nextLookup.keys()])]
+    change({ ...next, ...Object.fromEntries(keys.map((key) => [key, nextLookup.get(key)])) })
   }
   const sites = allowedSites(access).filter((site) => !visible.estate || site.estate === visible.estate)
   const lookupScope = tripLookupScope(lookupDraft)
@@ -139,20 +142,7 @@ export function ParkingFiltersBar({
   const estateOptions = estates.filter((estate) =>
     allowedSites(access).some((site) => site.estate === estate.id),
   )
-  return (
-    <Form className="panel filter-panel parking-filter-panel" onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <div className="filter-heading">
-        <span>
-          <ListFilter size={16} /><strong>{report ? "Điều kiện báo cáo" : "Bộ lọc"}</strong>
-          {pending && <span className="filter-pending">Chưa áp dụng</span>}
-        </span>
-        {report && <Button variant="ghost" onClick={() => setDraft(defaultParkingFilters(cutoff))}>Đặt lại</Button>}
-        {lookup && <Button variant="ghost" onClick={() => {
-          setDraft({ ...defaultParkingFilters(cutoff), start: draft.start, end: draft.end })
-          setLookupDraft(new URLSearchParams())
-          setScopeNotice("")
-        }}>Xóa bộ lọc</Button>}
-      </div>
+  const fields = (
       <div className={lookup ? "parking-trip-fields" : undefined}>
       <div className="filter-grid">
         {lookup ? <>
@@ -167,7 +157,7 @@ export function ParkingFiltersBar({
             options={lookupSites.map((site) => ({ value: site.id, label: site.label }))}
             onChange={(values) => updateLookup({ site: tripLookupValue(values) })} />
           <CardLookupMultiFilter label="Phương tiện" value={lookupScope.vehicles} allLabel="Tất cả phương tiện"
-            options={parkingVehicles.map((value) => ({ value, label: value }))}
+            options={(lookupDraft.has("bContext") ? behaviorVehicles : parkingVehicles).map((value) => ({ value, label: value }))}
             onChange={(values) => updateLookup({ vehicle: tripLookupValue(values) })} />
         </> : <>
         <Field label="Khu đô thị">
@@ -203,13 +193,23 @@ export function ParkingFiltersBar({
       </div>
       {lookup?.fields(lookupDraft, updateLookup)}
       </div>
-      {lookup && <p className="lookup-multi-hint">Trong cùng một bộ lọc: khớp một trong các lựa chọn. Giữa các bộ lọc: đáp ứng đồng thời.</p>}
-      {lookup && scopeNotice && <p className="lookup-multi-notice" role="status">{scopeNotice}</p>}
-      {manual ? (
-        <div className={`filter-second-row${lookup ? " parking-lookup-period" : ""}`}>
-          <ReportPeriodFields period={draft} max={cutoff} error={datesError} onChange={update}
-            label={lookup ? "Khoảng ngày tra cứu" : undefined}>
-            {lookup && <div className="parking-lookup-hours">
+  )
+  if (lookup) return <LookupFilterPanel label="Bộ lọc Tra cứu lượt xe" className="parking-filter-panel"
+    pending={pending} disabled={!!(datesError || lookupError)} busy={loading} onApply={apply} onClear={() => {
+      const cleared = { ...defaultParkingFilters(cutoff), start: filters.start, end: filters.end }
+      const clearedLookup = new URLSearchParams()
+      setDraft(cleared)
+      setLookupDraft(clearedLookup)
+      setScopeNotice("")
+      apply(cleared, clearedLookup)
+    }}>
+    {fields}
+    <p className="lookup-multi-hint">{lookupMatchHint}</p>
+    {scopeNotice && <p className="lookup-multi-notice" role="status">{scopeNotice}</p>}
+    <div className="lookup-time-section">
+      <div className="lookup-time-fields parking-lookup-period">
+        <ReportPeriodFields period={draft} max={cutoff} error={datesError} onChange={update} label="Khoảng ngày tra cứu">
+          <div className="parking-lookup-hours">
               <Field label="Từ giờ" hint={supportsHours && lookupMode !== "closing" ? "Ngày đầu · trống: 00:00" : "Bỏ đối chiếu để chọn giờ."}>
                 <Input type="time" aria-label="Từ giờ" lang="vi-VN" step={60}
                   disabled={!supportsHours || lookupMode === "closing"}
@@ -223,8 +223,31 @@ export function ParkingFiltersBar({
                   value={lookupDraft.get("hourEnd") ?? ""}
                   onChange={(event) => updateLookup({ hourEnd: event.target.value || null })} />
               </Field>
-            </div>}
-          </ReportPeriodFields>
+          </div>
+        </ReportPeriodFields>
+      </div>
+      {lookupDraft.has("bContext") && <p className="lookup-time-hint"><Info size={13} />
+        <span>Lọc theo giờ vào và nhóm dữ liệu của báo cáo Phân tích hành vi.</span>
+      </p>}
+    </div>
+    {lookupError && <p className="lookup-filter-error" role="alert">{lookupError}</p>}
+  </LookupFilterPanel>
+  return (
+    <Form className="panel filter-panel parking-filter-panel" onSubmit={(event) => {
+      event.preventDefault()
+      if (manual && !datesError && !loading) apply()
+    }}>
+      <div className="filter-heading">
+        <span>
+          <ListFilter size={16} /><strong>{report ? "Điều kiện báo cáo" : "Bộ lọc"}</strong>
+          {pending && <span className="filter-pending">Chưa áp dụng</span>}
+        </span>
+        {report && <Button variant="ghost" onClick={() => setDraft(defaultParkingFilters(cutoff))}>Đặt lại</Button>}
+      </div>
+      {fields}
+      {manual ? (
+        <div className="filter-second-row">
+          <ReportPeriodFields period={draft} max={cutoff} error={datesError} onChange={update} />
           <div className="run-report">
             <Button type="submit" variant="primary" disabled={!!(datesError || lookupError) || loading}>
               {loading ? <LoaderCircle size={16} className="spin" /> : report ? <ChartNoAxesCombined size={16} /> : <Search size={16} />}
@@ -236,7 +259,6 @@ export function ParkingFiltersBar({
         <ReportPeriodFields period={filters} max={cutoff} error={datesError} label="Khoảng ngày tra cứu"
           onChange={(period) => change(period)} />
       </div>}
-      {lookupError && <p className="lookup-filter-error" role="alert">{lookupError}</p>}
     </Form>
   )
 }
@@ -410,7 +432,7 @@ export function ParkingPagination({
   size: number
   page: number
   change: (page: number) => void
-  changeSize: (size: number) => void
+  changeSize?: (size: number) => void
 }) {
   return (
     <div className="pagination parking-pagination">
@@ -437,7 +459,7 @@ export function ParkingPagination({
         >
           <ChevronRight size={16} />
         </Button>
-        <Select
+        {changeSize && <Select
           aria-label="Số dòng mỗi trang"
           options={[20, 50, 100].map((value) => ({
             value: String(value),
@@ -445,7 +467,7 @@ export function ParkingPagination({
           }))}
           value={size}
           onChange={(e) => changeSize(Number(e.target.value))}
-        />
+        />}
       </div>
     </div>
   )

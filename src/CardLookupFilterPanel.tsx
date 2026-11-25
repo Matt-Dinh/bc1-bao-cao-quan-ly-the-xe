@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ArrowLeft, Info, ListFilter, Search } from "lucide-react"
+import { ArrowLeft, Info } from "lucide-react"
 import { cardTypes, customerGroups, date, estates, maxDate, today, vehicles } from "./data"
 import ReportPeriodFields from "./ReportPeriodFields"
 import CardLookupStatusFilter from "./CardLookupStatusFilter"
@@ -15,7 +15,8 @@ import {
   stockMetricLabels,
 } from "./report-model"
 import type { CardLookupFilters } from "./report-model"
-import { Button, Field, Form, Input } from "./ui"
+import { Button, Field, Input } from "./ui"
+import LookupFilterPanel, { lookupMatchHint } from "./LookupFilterPanel"
 
 const firstReportDate = "2026-09-01"
 function selectFilter(
@@ -66,19 +67,9 @@ export default function CardLookupFilterPanel({
   }
 
   return (
-    <Form className="panel filter-panel lookup-filter-panel" aria-label="Bộ lọc Tra cứu thẻ"
-      onSubmit={(event) => {
-        event.preventDefault()
-        if (!error && !selectionError) onApply(movements ? draft : { ...draft, movement: [] })
-      }}>
-      <div className="filter-heading">
-        <span>
-          <ListFilter size={16} />
-          <strong>Bộ lọc tra cứu</strong>
-          {pending && <span className="filter-pending">Chưa áp dụng</span>}
-        </span>
-        <Button variant="ghost" onClick={clear}>Xóa bộ lọc</Button>
-      </div>
+    <LookupFilterPanel label="Bộ lọc Tra cứu thẻ" pending={pending} disabled={!!error || !!selectionError}
+      onApply={() => onApply(movements ? draft : { ...draft, movement: [] })} onClear={clear}
+      beforeApply={onBack && <Button variant="ghost" onClick={onBack}><ArrowLeft size={14} /> Quay lại báo cáo</Button>}>
       <div className="filter-grid lookup-filter-primary">
         <Field label="Tìm thẻ">
           <Input type="search" aria-label="Tìm thẻ" maxLength={100}
@@ -117,7 +108,7 @@ export default function CardLookupFilterPanel({
           options={lookupAlerts.map((label) => ({ value: label, label }))}
           note="Khớp một trong các cảnh báo đã chọn. Bỏ chọn hết để không giới hạn, gồm cả thẻ không có cảnh báo." />
       </div>
-      <p className="lookup-multi-hint">Trong cùng một bộ lọc: khớp một trong các lựa chọn. Giữa các bộ lọc: đáp ứng đồng thời.</p>
+      <p className="lookup-multi-hint">{lookupMatchHint}</p>
       {scopeNotice && <p className="lookup-multi-notice" role="status">{scopeNotice}</p>}
       {selectionError && <p className="field-message" role="alert">{selectionError}</p>}
       <div className="lookup-time-section">
@@ -136,10 +127,6 @@ export default function CardLookupFilterPanel({
               : `Trạng thái và cảnh báo xét tại hết ngày ${date(draft.end)}; mỗi thẻ một dòng. Chọn hai ngày cùng là hôm nay để xem trạng thái hiện tại.`}</span>
         </p>
       </div>
-      <div className="lookup-filter-footer">
-        {onBack && <Button variant="ghost" onClick={onBack}><ArrowLeft size={14} /> Quay lại báo cáo</Button>}
-        <Button variant="primary" type="submit" disabled={!!error || !!selectionError}><Search size={14} /> Áp dụng</Button>
-      </div>
-    </Form>
+    </LookupFilterPanel>
   )
 }

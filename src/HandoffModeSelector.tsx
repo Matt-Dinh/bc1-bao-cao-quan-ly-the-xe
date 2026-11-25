@@ -16,16 +16,6 @@ export default function HandoffModeSelector({ value, onChange }: {
   </label>
 }
 
-export function BehaviorReportPending() {
-  return <section className="panel handoff-pending" aria-labelledby="behavior-report-title">
-    <span className="handoff-pending-icon"><FileBarChart2 size={25} aria-hidden="true" /></span>
-    <span className="handoff-pending-label">BÁO CÁO PHÂN TÍCH HÀNH VI KHÁCH HÀNG</span>
-    <h1 id="behavior-report-title">Chưa có giao diện trong bản bàn giao này</h1>
-    <p>Mode đã được tách riêng. Giao diện báo cáo sẽ được bổ sung khi có source tương ứng.</p>
-    <small>Chọn mode khác ở thanh trên để xem các màn hình đã có.</small>
-  </section>
-}
-
 export function RevenueReportPending() {
   return <section className="panel handoff-pending" aria-labelledby="revenue-pending-title">
     <span className="handoff-pending-icon"><FileBarChart2 size={25} aria-hidden="true" /></span>

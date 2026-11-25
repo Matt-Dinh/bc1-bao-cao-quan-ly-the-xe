@@ -13,13 +13,17 @@ import {
   isLocked,
   dayAt,
   parkingGroups,
+  timeMinutes,
 } from "./parking-model"
+import { behaviorDemoPlate, demoBehaviorTraffic, withBehaviorDemoSettings } from "./behavior-demo"
 import type {
   Adjustment,
+  Audit,
   Capacity,
   ParkingAccess,
   ParkingSettings,
   Schedule,
+  Threshold,
   Trip,
   Vehicle,
 } from "./parking-model"
@@ -134,56 +138,141 @@ const sampleSchedules: Schedule[] = [
           { name: "Ca 3", from: "22:00", to: "06:00" },
         ],
 }))
-const sampleSettings = (): ParkingSettings => ({
-  capacities: [
-    ...capacityRows.map((row, index) => ({
-      ...initialVersion,
-      id: `cap-${index}`,
-      ...row,
-    })),
+const sampleThresholds = (): Threshold[] => {
+  const today = vnToday()
+  return [
     {
-      ...initialVersion,
-      ...capacityRows[0],
-      id: "cap-A-new",
-      effective: shiftDay(vnToday(), 7),
+      id: "thr-A-1",
+      estate: "A",
+      hours: 72,
+      note: "Áp dụng ngưỡng mặc định giai đoạn đầu vận hành.",
+      effective: "2026-01-01",
+      actor: "Admin Local",
+      updated: "2025-12-20T09:00:00",
     },
-  ],
-  plans: carSites.flatMap(({ site, plan }) =>
-    plan === null
-      ? []
-      : [
-          ...new Set(["2026-09", "2026-10", "2026-11", vnToday().slice(0, 7)]),
-        ].map((month) => ({
-          ...initialVersion,
-          id: `plan-${site}-${month}`,
-          site,
-          vehicle: "Ô tô",
-          effective: `${month}-01`,
-          month,
-          hours: plan,
-        })),
-  ),
-  schedules: sampleSchedules,
-  thresholds: [],
-  holidays: ["2026-09-01", "2026-09-02"].map((effective, index) => ({
-    ...initialVersion,
-    id: `holiday-${index}`,
-    effective,
-    name: index ? "Quốc khánh" : "Nghỉ Quốc khánh",
-    substitute: false,
-  })),
-  history: [],
-})
+    {
+      id: "thr-A-2",
+      estate: "A",
+      hours: 48,
+      note: "Giảm ngưỡng cảnh báo tồn bất thường cho khu vực hầm S1, S2.",
+      effective: "2026-09-01",
+      actor: "IT VCR",
+      updated: "2026-08-25T14:20:00",
+    },
+    {
+      id: "thr-A-3",
+      estate: "A",
+      hours: 36,
+      note: "Siết chặt kiểm soát xe vãng lai gửi dài ngày dịp cao điểm cuối năm.",
+      effective: shiftDay(today, 7),
+      actor: "Admin Local",
+      updated: `${shiftDay(today, -1)}T10:15:00`,
+    },
+    {
+      id: "thr-B-1",
+      estate: "B",
+      hours: 72,
+      note: "Áp dụng ngưỡng tiêu chuẩn 3 ngày theo quy chế vận hành.",
+      effective: "2026-01-01",
+      actor: "Admin Local",
+      updated: "2025-12-20T09:05:00",
+    },
+    {
+      id: "thr-B-2",
+      estate: "B",
+      hours: 24,
+      note: "Tạm hoãn điều chỉnh theo đề xuất của Ban quản lý.",
+      effective: shiftDay(today, 3),
+      actor: "IT VCR",
+      updated: `${shiftDay(today, -2)}T16:40:00`,
+      canceled: true,
+    },
+    {
+      id: "thr-C-1",
+      estate: "C",
+      hours: 60,
+      note: "Điều chỉnh riêng cho bãi hầm T1, T2 mật độ cao.",
+      effective: "2026-10-01",
+      actor: "Admin Local",
+      updated: "2026-09-26T11:30:00",
+    },
+  ]
+}
+const sampleThresholdHistory = (thresholds: Threshold[]): Audit[] => {
+  const byId = new Map(thresholds.map((row) => [row.id, row]))
+  const a1 = byId.get("thr-A-1"), a2 = byId.get("thr-A-2"), a3 = byId.get("thr-A-3")
+  const b2 = byId.get("thr-B-2"), c1 = byId.get("thr-C-1")
+  const entries: Audit[] = []
+  if (a3) entries.push({ id: "hist-thr-1", kind: "thresholds", at: a3.updated, actor: a3.actor, action: "Thêm khai báo", scope: "A", detail: "Vinhomes Ocean Park", after: a3 })
+  if (b2) entries.push({ id: "hist-thr-2", kind: "thresholds", at: b2.updated, actor: b2.actor, action: "Hủy khai báo", scope: "B", detail: "Vinhomes Smart City", before: { ...b2, canceled: false }, after: b2 })
+  if (c1) entries.push({ id: "hist-thr-3", kind: "thresholds", at: c1.updated, actor: c1.actor, action: "Thêm khai báo", scope: "C", detail: "Vinhomes Times City", after: c1 })
+  if (a1 && a2) entries.push({ id: "hist-thr-4", kind: "thresholds", at: a2.updated, actor: a2.actor, action: "Thêm khai báo", scope: "A", detail: "Vinhomes Ocean Park", before: a1, after: a2 })
+  return entries
+}
+const sampleSettings = (): ParkingSettings => {
+  const thresholds = sampleThresholds()
+  return {
+    capacities: [
+      ...capacityRows.map((row, index) => ({
+        ...initialVersion,
+        id: `cap-${index}`,
+        ...row,
+      })),
+      {
+        ...initialVersion,
+        ...capacityRows[0],
+        id: "cap-A-new",
+        effective: shiftDay(vnToday(), 7),
+      },
+    ],
+    plans: carSites.flatMap(({ site, plan }) =>
+      plan === null
+        ? []
+        : [
+            ...new Set(["2026-09", "2026-10", "2026-11", vnToday().slice(0, 7)]),
+          ].map((month) => ({
+            ...initialVersion,
+            id: `plan-${site}-${month}`,
+            site,
+            vehicle: "Ô tô",
+            effective: `${month}-01`,
+            month,
+            hours: plan,
+          })),
+    ),
+    schedules: sampleSchedules,
+    thresholds,
+    holidays: ["2026-09-01", "2026-09-02"].map((effective, index) => ({
+      ...initialVersion,
+      id: `holiday-${index}`,
+      effective,
+      name: index ? "Quốc khánh" : "Nghỉ Quốc khánh",
+      substitute: false,
+    })),
+    history: sampleThresholdHistory(thresholds),
+  }
+}
+
+function withDemoThresholds(settings: ParkingSettings): ParkingSettings {
+  if (settings.thresholds.length) return settings
+  const thresholds = sampleThresholds()
+  const history = sampleThresholdHistory(thresholds)
+  return {
+    ...settings,
+    thresholds,
+    history: [...history, ...settings.history],
+  }
+}
 
 export const settingsKey = "vparking:parking:settings:v1"
 export function readSettings() {
   try {
     const saved = localStorage.getItem(settingsKey)
-    if (saved) return JSON.parse(saved) as ParkingSettings
+    if (saved) return withBehaviorDemoSettings(withDemoThresholds(JSON.parse(saved) as ParkingSettings))
   } catch {
     /* The demo can still run with the initial declarations. */
   }
-  return sampleSettings()
+  return withBehaviorDemoSettings(sampleSettings())
 }
 export const writeSettings = (settings: ParkingSettings) =>
   localStorage.setItem(settingsKey, JSON.stringify(settings))
@@ -282,7 +371,8 @@ export function seedTrips(today = vnToday()): Trip[] {
   const rows: Trip[] = []
   for (const day of days) {
     const midnight = dayStart(day)
-    let id = 10001 + ((midnight - dayStart(goLive)) / dayMinutes) * 10000
+    const dayIndex = (midnight - dayStart(goLive)) / dayMinutes
+    let id = 10001 + dayIndex * 10000
     const dayNumber = Number(day.slice(-2))
     for (const config of capacityRows) {
       const isSmallCarLot = config.site === "B:2"
@@ -294,15 +384,10 @@ export function seedTrips(today = vnToday()): Trip[] {
         const durations = [9, 42, 125, 170, 300, 420, 565, 605]
         const duration =
           durations[(index + dayNumber) % durations.length] + (index % 20)
-        rows.push(
-          sampleTrip(
-            id++,
-            config.site,
-            config.vehicle,
-            midnight + time,
-            midnight + time + duration,
-          ),
-        )
+        const trip = sampleTrip(id, config.site, config.vehicle, midnight + time, midnight + time + duration)
+        const plate = behaviorDemoPlate(id, dayIndex, config.vehicle, trip.plate)
+        rows.push({ ...trip, plate, cameraIn: plate, cameraOut: plate })
+        id++
       }
       if (isSmallCarLot && dayNumber % 3 === 0) {
         for (let index = 0; index < 45; index++) {
@@ -332,6 +417,18 @@ export function seedTrips(today = vnToday()): Trip[] {
           )
         }
       }
+    }
+  }
+  const demoDays = new Set(days)
+  for (const [index, event] of demoBehaviorTraffic(today).entries()) {
+    if (!demoDays.has(event.day)) continue
+    const configured = capacityRows.filter((row) => row.site === event.site)
+    for (let visit = 0; visit < event.count && configured.length; visit++) {
+      const config = configured[visit % configured.length]
+      const entered = dayStart(event.day) + timeMinutes(event.start) + (visit * 7) % 85
+      const exited = entered + [24, 65, 105, 140, 210, 295][visit % 6]
+      const trip = sampleTrip(9_000_000 + index * 100 + visit, event.site, config.vehicle, entered, exited)
+      rows.push({ ...trip, id: `LX-BC4-${event.id}-${visit + 1}` })
     }
   }
   rows.push({

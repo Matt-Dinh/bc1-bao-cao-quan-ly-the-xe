@@ -28,6 +28,7 @@ import {
   parkingGroups,
   peakOf,
   ratio,
+  shiftDay,
   shiftIntervals,
   siteById,
 } from "./parking-model"
@@ -95,6 +96,7 @@ type ChartPoint = {
   warning?: boolean
   sub?: string
   value?: string
+  emptyLabel?: string
   color?: string
   action?: () => void
   incomingAction?: () => void
@@ -306,6 +308,7 @@ function Plot({
               const content = (
                 <>
                   <span className={`parking-column-track ${point.tint ?? ""}`}>
+                    {point.emptyLabel && <span className="parking-column-empty">{point.emptyLabel}</span>}
                     {point.incoming !== undefined && bar(point.incoming, point.color ?? chartColors[0],
                       `${point.detail ?? point.label} · Xe vào ${fmt(point.incoming)}`, point.incomingAction, point.value)}
                     {point.outgoing !== undefined && bar(point.outgoing, chartColors[2],
@@ -418,6 +421,12 @@ export default function ParkingDashboard({
         )
       : (detailSiteDay?.hours ?? [])
   const total = data.total
+  const hasHolidayDays = data.dayGroups.some((row) => row.label === dayTypes[2])
+  const holidayOutsidePeriod = settings.holidays.filter((row) => !row.canceled &&
+    row.effective >= goLive && row.effective <= cutoff &&
+    (row.effective < filters.start || row.effective > filters.end))
+    .sort((a, b) => Math.abs(dayStart(a.effective) - dayStart(filters.end)) -
+      Math.abs(dayStart(b.effective) - dayStart(filters.end)))[0]
   const exceededDays = new Set(total.exceeded.map((row) => row.day)).size
   const start = dayStart(data.days[0] ?? filters.start),
     end = dayStart(filters.end) + dayMinutes
@@ -1494,31 +1503,41 @@ export default function ParkingDashboard({
               title="Lấp đầy theo loại ngày"
               description="So sánh các ngày trong kỳ"
               icon={<CalendarDays size={18} />}
-              note="Ngày lễ tết lấy theo lịch trong Tham số chỗ đỗ."
+              note={hasHolidayDays ? "Ngày lễ tết lấy theo Sự kiện và ngày lễ → Ngày lễ."
+                : "Kỳ đang xem không có ngày lễ theo Sự kiện và ngày lễ → Ngày lễ."}
               details={() => open({ kind: "day-type" })}
             >
               <Plot
                 percentScale
                 format={(value) => `${value}%`}
-                points={data.dayGroups
-                  .filter((row) => row.label !== "Cả kỳ")
-                  .map((row, index) => ({
-                    id: row.label,
-                    label: row.label,
+                points={dayTypes.map((label, index) => {
+                  const row = data.dayGroups.find((group) => group.label === label)
+                  return {
+                    id: label,
+                    label,
                     incoming:
-                      row.occupancy === null ? undefined : row.occupancy * 100,
+                      row?.occupancy == null ? undefined : row.occupancy * 100,
+                    emptyLabel: !row ? "—" : undefined,
                     color: chartColors[index],
                     limit:
                       total.occupancy === null ? null : total.occupancy * 100,
-                    value: pct(row.occupancy),
-                    sub: `${row.days.length} ngày · ${numberText(row.incoming / row.days.length)} xe vào/ngày`,
-                    action: lookupAction((row.occupancy ?? 0) > 0, "parked", row.label,
-                      { dayKind: dayTypes.find((kind) => kind === row.label) }),
-                  }))}
+                    value: pct(row?.occupancy ?? null),
+                    sub: row ? `${row.days.length} ngày · ${numberText(row.incoming / row.days.length)} xe vào/ngày` : "0 ngày trong kỳ",
+                    action: lookupAction((row?.occupancy ?? 0) > 0, "parked", label, { dayKind: label }),
+                  }
+                })}
               />
               <Legend
                 entries={[[`Lấp đầy cả kỳ ${pct(total.occupancy)}`, "#d94a55"]]}
               />
+              {!hasHolidayDays && holidayOutsidePeriod && <div className="parking-holiday-period">
+                <span>Ngày lễ gần kỳ này nhất · {date(holidayOutsidePeriod.effective)}</span>
+                <Button variant="link" onClick={() => {
+                  const start = shiftDay(holidayOutsidePeriod.effective, -3)
+                  const end = shiftDay(holidayOutsidePeriod.effective, 3)
+                  update({ start: start < goLive ? goLive : start, end: end > cutoff ? cutoff : end })
+                }}>Xem kỳ có ngày lễ<ArrowUpRight size={13} /></Button>
+              </div>}
             </Chart>
           </>
         )}

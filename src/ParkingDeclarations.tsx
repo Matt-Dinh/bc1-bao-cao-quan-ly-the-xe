@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Ban,
   History,
+  Info,
   ListFilter,
   Pencil,
   Plus,
@@ -11,6 +12,8 @@ import {
   TriangleAlert,
   Upload,
 } from "lucide-react"
+import CardLookupMultiFilter from "./CardLookupMultiFilter"
+import LookupFilterPanel, { lookupMatchHint } from "./LookupFilterPanel"
 import {
   Badge,
   Button,
@@ -77,8 +80,9 @@ import type {
 } from "./parking-ui"
 
 const operationalTabs: DeclarationKind[] = ["capacities", "plans", "schedules"]
-const configTabs: DeclarationKind[] = ["thresholds", "holidays"]
+const configTabs: DeclarationKind[] = ["thresholds"]
 const statuses = ["Đang áp dụng", "Sắp áp dụng", "Hết hiệu lực", "Đã hủy"]
+const splitParam = (value: string) => value ? value.split("|").filter(Boolean) : []
 const excelColumns: Record<"capacities" | "plans", string[]> = {
   capacities: [
     "Mã bãi",
@@ -206,11 +210,13 @@ export default function ParkingDeclarations({
       )
     : {}
   const warning = kind === "plans" && draft ? planWarning(draft, settings) : ""
+  const estateList = splitParam(estate)
+  const statusList = splitParam(status)
   const scope = (row: Declaration) => {
     const id = declarationScope(row)
     return (
       (!id || !access.estate || id === access.estate) &&
-      (!id || !estate || id === estate) &&
+      (!id || !estateList.length || estateList.includes(id)) &&
       (!site || !("site" in row) || row.site === site)
     )
   }
@@ -220,14 +226,18 @@ export default function ParkingDeclarations({
       : "estate" in row
         ? (estates.find((item) => item.id === row.estate)?.name ?? "—")
         : row.name
+  const searchTarget = (row: Declaration) =>
+    "estate" in row
+      ? `${label(row)} ${estates.find((item) => item.id === row.estate)?.code ?? ""} ${row.note}`
+      : label(row)
   const collection: Declaration[] = settings[kind]
   const rows = collection
     .filter(
       (row) =>
         scope(row) &&
-        (!status || status === declarationStatus(row, collection, today)) &&
+        (!statusList.length || statusList.includes(declarationStatus(row, collection, today))) &&
         (!vehicle || !("vehicle" in row) || row.vehicle === vehicle) &&
-        (!search || normalize(label(row)).includes(normalize(search))),
+        (!search || normalize(searchTarget(row)).includes(normalize(search))),
     )
     .sort(
       (a, b) =>
@@ -441,7 +451,6 @@ export default function ParkingDeclarations({
       {kind === "thresholds" && (
         <>
           {textField("hours", "Ngưỡng tồn bất thường (giờ)", "number")}
-          {textField("approval", "Số phê duyệt (PD)", "text", 255)}
         </>
       )}
       {kind === "holidays" && textField("name", "Tên ngày lễ tết", "text", 255)}
@@ -625,10 +634,9 @@ export default function ParkingDeclarations({
                   .map((shift) => `${shift.name} ${shift.from}–${shift.to}`)
                   .join("; "),
               }
-            : "approval" in row
+            : "estate" in row
               ? {
                   "Ngưỡng (giờ)": row.hours,
-                  "Số PD": row.approval,
                   "Ghi chú": row.note,
                 }
               : {
@@ -716,17 +724,12 @@ export default function ParkingDeclarations({
             label: "Ngưỡng (giờ)",
             numeric: true,
             cell: (row: Declaration) =>
-              "approval" in row ? fmt(row.hours) : "—",
-          },
-          {
-            label: "Số PD",
-            cell: (row: Declaration) =>
-              "approval" in row ? row.approval : "—",
+              "estate" in row ? fmt(row.hours) : "—",
           },
           {
             label: "Ghi chú",
             cell: (row: Declaration) =>
-              "approval" in row ? (
+              "estate" in row ? (
                 <span title={row.note} className="parking-truncate">
                   {row.note || "—"}
                 </span>
@@ -784,21 +787,23 @@ export default function ParkingDeclarations({
             label: "Thao tác",
             cell: (row: Declaration) =>
               canEditRecord(kind, row, settings, access) ? (
-                <div className="parking-inline">
+                <div className="op-row-actions">
                   <Button
                     variant="ghost"
+                    title="Sửa khai báo"
                     aria-label={`Sửa ${label(row)}`}
                     onClick={() => start(row)}
                   >
-                    <Pencil size={15} />
+                    <Pencil size={14} />
                   </Button>
                   {kind !== "holidays" && (
                     <Button
                       variant="ghost"
+                      title="Hủy khai báo"
                       aria-label={`Hủy ${label(row)}`}
                       onClick={() => setCancel(row)}
                     >
-                      <Ban size={15} />
+                      <Ban size={14} />
                     </Button>
                   )}
                 </div>
@@ -939,16 +944,35 @@ export default function ParkingDeclarations({
   const history = settings.history.filter((item) => {
     const record = item.after ?? item.before
     return item.kind && tabs.includes(item.kind) &&
-      (!item.scope || ((!access.estate || item.scope === access.estate) && (!estate || item.scope === estate))) &&
+      (!item.scope || ((!access.estate || item.scope === access.estate) && (!estateList.length || estateList.includes(item.scope)))) &&
       (!site || (record && "site" in record && record.site === site)) &&
       (!vehicle || !record || !("vehicle" in record) || record.vehicle === vehicle)
   })
+  const applyFilters = (next = filterDraft) =>
+    update({
+      configEstate: next.estate || null,
+      configSite: next.site || null,
+      configVehicle: next.vehicle || null,
+      configStatus: next.status || null,
+      q: next.search || null,
+      page: null,
+    })
+  const clearFilters = () => {
+    const cleared = { estate: "", site: "", search: "", status: "", vehicle: "" }
+    setFilterDraft(cleared)
+    applyFilters(cleared)
+  }
   return (
     <>
       <ParkingHeading
         title={title}
         group={configuration ? "Cấu hình" : "Quản lý chỗ đỗ"}
         cutoff={cutoff}
+        description={
+          configuration
+            ? "Thiết lập ngưỡng cảnh báo xe đỗ quá thời gian quy định theo từng khu đô thị."
+            : undefined
+        }
         actions={
           <>
             {editable && importKind && (
@@ -982,67 +1006,112 @@ export default function ParkingDeclarations({
           </>
         }
       />
-      {kind === "thresholds" && (
-        <div className="parking-banner">
-          Khu đô thị chưa khai báo ngưỡng riêng dùng mặc định 72 giờ.
+      {configuration && (
+        <div className="settings-info">
+          <Info size={16} />
+          <span>
+            Khu đô thị chưa khai báo ngưỡng riêng dùng mặc định <strong>72 giờ</strong>. Thay đổi chỉ áp dụng từ ngày hiệu lực. Lịch ngày lễ tết dùng chung cho báo cáo chỗ đỗ được quản lý tại <strong>Sự kiện và ngày lễ → Ngày lễ</strong>.
+          </span>
         </div>
       )}
-      <Form className="panel filter-panel parking-filter-panel" onSubmit={(event) => {
-        event.preventDefault()
-        update({ configEstate: filterDraft.estate || null, configSite: filterDraft.site || null,
-          configVehicle: filterDraft.vehicle || null, configStatus: filterDraft.status || null,
-          q: filterDraft.search || null, page: null })
-      }}>
-        <div className="filter-heading">
-          <span><ListFilter size={16} /><strong>Bộ lọc</strong>{pendingFilters && <span className="filter-pending">Chưa áp dụng</span>}</span>
-          <Button variant="ghost" onClick={() => setFilterDraft({ estate: "", site: "", search: "", status: "", vehicle: "" })}>Xóa bộ lọc</Button>
-        </div>
-        <div className="filter-grid">
-          <Field label="Khu đô thị">
-            <Select aria-label="Khu đô thị" disabled={kind === "holidays"} value={filterDraft.estate}
-              options={[allOption("Tất cả khu đô thị"), ...estateOptions.map((item) => ({ value: item.id, label: item.name }))]}
-              onChange={(event) => setFilter("estate", event.target.value)} />
-          </Field>
-          <Field label="Bãi xe">
-            <Select aria-label="Bãi xe" disabled={configuration} value={filterDraft.site}
-              options={[allOption("Tất cả bãi xe"), ...sites.filter((item) => !filterDraft.estate || item.estate === filterDraft.estate)
-                .map((item) => ({ value: item.id, label: item.label }))]}
-              onChange={(event) => setFilter("site", event.target.value)} />
-          </Field>
-          <Field label="Phương tiện" hint={!importKind ? "Áp dụng cho sức chứa và kế hoạch." : undefined}>
-            <Select aria-label="Phương tiện" disabled={!importKind} value={filterDraft.vehicle}
-              options={[allOption("Tất cả phương tiện"), ...parkingVehicles]}
-              onChange={(event) => setFilter("vehicle", event.target.value)} />
-          </Field>
-          <Field label="Trạng thái">
-            <Select aria-label="Trạng thái" value={filterDraft.status} options={[allOption("Tất cả trạng thái"), ...statuses]}
-              onChange={(event) => setFilter("status", event.target.value)} />
-          </Field>
-        </div>
-        <div className="filter-second-row">
-          <Field label={kind === "holidays" ? "Tên ngày lễ tết" : configuration ? "Tên khu đô thị" : "Tên bãi xe"}>
-            <Input type="search" aria-label="Tìm khai báo" maxLength={100} placeholder={kind === "holidays" ? "Tìm tên ngày lễ tết" : configuration ? "Tìm tên khu đô thị" : "Tìm tên bãi xe"}
-              value={filterDraft.search} onChange={(event) => setFilter("search", event.target.value)} />
-          </Field>
-          <div className="run-report"><Button type="submit" variant="primary"><Search size={16} /> Áp dụng</Button></div>
-        </div>
-      </Form>
-      <div className="panel">
-        <ParkingTabs
-          options={tabs.map((tab) => declarationLabels[tab])}
-          value={declarationLabels[kind]}
-          change={(value) =>
-            update({
-              configTab:
-                tabs.find((tab) => declarationLabels[tab] === value) ?? null,
-              page: null,
-            })
-          }
-        />
-        <div className="parking-toolbar">
-          <span className="count-text"><strong>{fmt(rows.length)}</strong> khai báo</span>
+      {configuration ? (
+        <LookupFilterPanel
+          label="Bộ lọc Tham số chỗ đỗ"
+          pending={pendingFilters}
+          onApply={() => applyFilters()}
+          onClear={clearFilters}
+        >
+          <div className="filter-grid config-filter-grid">
+            <Field label="Tìm kiếm">
+              <Input
+                type="search"
+                aria-label="Tìm khai báo"
+                maxLength={100}
+                placeholder="Tên khu đô thị, ghi chú…"
+                value={filterDraft.search}
+                onChange={(event) => setFilter("search", event.target.value)}
+              />
+            </Field>
+            <CardLookupMultiFilter
+              label="Khu đô thị"
+              value={splitParam(filterDraft.estate)}
+              allLabel="Tất cả khu đô thị"
+              options={estateOptions.map((item) => ({ value: item.id, label: item.name }))}
+              onChange={(values) => setFilter("estate", values.join("|"))}
+            />
+            <CardLookupMultiFilter
+              label="Trạng thái"
+              value={splitParam(filterDraft.status)}
+              allLabel="Tất cả trạng thái"
+              options={statuses.map((value) => ({ value, label: value }))}
+              onChange={(values) => setFilter("status", values.join("|"))}
+            />
+          </div>
+          <p className="lookup-multi-hint">{lookupMatchHint}</p>
+        </LookupFilterPanel>
+      ) : (
+        <Form className="panel filter-panel parking-filter-panel" onSubmit={(event) => {
+          event.preventDefault()
+          applyFilters()
+        }}>
+          <div className="filter-heading">
+            <span><ListFilter size={16} /><strong>Bộ lọc</strong>{pendingFilters && <span className="filter-pending">Chưa áp dụng</span>}</span>
+            <Button variant="ghost" onClick={clearFilters}>Xóa bộ lọc</Button>
+          </div>
+          <div className="filter-grid">
+            <Field label="Khu đô thị">
+              <Select aria-label="Khu đô thị" value={filterDraft.estate}
+                options={[allOption("Tất cả khu đô thị"), ...estateOptions.map((item) => ({ value: item.id, label: item.name }))]}
+                onChange={(event) => setFilter("estate", event.target.value)} />
+            </Field>
+            <Field label="Bãi xe">
+              <Select aria-label="Bãi xe" value={filterDraft.site}
+                options={[allOption("Tất cả bãi xe"), ...sites.filter((item) => !filterDraft.estate || item.estate === filterDraft.estate)
+                  .map((item) => ({ value: item.id, label: item.label }))]}
+                onChange={(event) => setFilter("site", event.target.value)} />
+            </Field>
+            <Field label="Phương tiện" hint={!importKind ? "Áp dụng cho sức chứa và kế hoạch." : undefined}>
+              <Select aria-label="Phương tiện" disabled={!importKind} value={filterDraft.vehicle}
+                options={[allOption("Tất cả phương tiện"), ...parkingVehicles]}
+                onChange={(event) => setFilter("vehicle", event.target.value)} />
+            </Field>
+            <Field label="Trạng thái">
+              <Select aria-label="Trạng thái" value={filterDraft.status} options={[allOption("Tất cả trạng thái"), ...statuses]}
+                onChange={(event) => setFilter("status", event.target.value)} />
+            </Field>
+          </div>
+          <div className="filter-second-row">
+            <Field label="Tên bãi xe">
+              <Input type="search" aria-label="Tìm khai báo" maxLength={100} placeholder="Tìm tên bãi xe"
+                value={filterDraft.search} onChange={(event) => setFilter("search", event.target.value)} />
+            </Field>
+            <div className="run-report"><Button type="submit" variant="primary"><Search size={16} /> Áp dụng</Button></div>
+          </div>
+        </Form>
+      )}
+      <section className="panel">
+        {tabs.length > 1 && (
+          <ParkingTabs
+            options={tabs.map((tab) => declarationLabels[tab])}
+            value={declarationLabels[kind]}
+            change={(value) =>
+              update({
+                configTab:
+                  tabs.find((tab) => declarationLabels[tab] === value) ?? null,
+                page: null,
+              })
+            }
+          />
+        )}
+        <div className="op-table-toolbar lookup-table-toolbar">
+          <div className="lookup-result-summary">
+            <span className="count-text" aria-live="polite">
+              <strong>{fmt(rows.length)}</strong> {configuration ? "cấu hình" : "khai báo"}
+            </span>
+          </div>
           <Button onClick={() => { setHistoryPage(1); setShowHistory(true) }}>
             <History size={15} /> Lịch sử thay đổi
+            {history.length > 0 && <span className="tab-counter">{history.length}</span>}
           </Button>
         </div>
         <ParkingTable
@@ -1051,17 +1120,7 @@ export default function ParkingDeclarations({
           rowKey={(row) => row.id}
           empty={
             search || estate || site || status || vehicle ? (
-              <NoMatches
-                clear={() =>
-                  update({
-                    q: null,
-                    configEstate: null,
-                    configSite: null,
-                    configStatus: null,
-                    configVehicle: null,
-                  })
-                }
-              />
+              <NoMatches clear={clearFilters} />
             ) : (
               "Chưa có khai báo"
             )
@@ -1074,7 +1133,7 @@ export default function ParkingDeclarations({
           change={(value) => update({ page: String(value) })}
           changeSize={(value) => update({ size: String(value), page: null })}
         />
-      </div>
+      </section>
       {editor && (
         <Overlay title={editorTitle} onClose={close} footer={footer}>
           <Form onSubmit={saveForm}>{fields}</Form>
@@ -1102,9 +1161,9 @@ export default function ParkingDeclarations({
       )}
       {showHistory && (
         <Overlay
-          wide
+          drawer
           title="Lịch sử thay đổi"
-          subtitle="Theo khu đô thị, bãi xe và phương tiện đang chọn."
+          subtitle={configuration ? "Các thay đổi ngưỡng cảnh báo trong phạm vi đang chọn." : "Theo khu đô thị, bãi xe và phương tiện đang chọn."}
           onClose={() => setShowHistory(false)}
           footer={<Button onClick={() => setShowHistory(false)}>Đóng</Button>}
         >
@@ -1285,8 +1344,8 @@ function historyValue(row: Declaration): ReactNode {
     return `${row.vehicle} · ${row.month} · ${numberText(row.hours)} giờ · ${effective}`
   if ("shifts" in row)
     return `${row.from}–${row.to} · ${row.shifts.map((shift) => `${shift.name} ${shift.from}–${shift.to}`).join(", ")} · ${effective}`
-  if ("approval" in row)
-    return `${row.hours} giờ · PD ${row.approval} · ${effective}${
+  if ("estate" in row)
+    return `${row.hours} giờ · ${effective}${
       row.note ? ` · ${row.note}` : ""
     }`
   return `${row.name} · ${effective}${row.substitute ? " · Nghỉ bù" : ""}`

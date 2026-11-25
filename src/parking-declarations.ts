@@ -42,7 +42,6 @@ export interface DeclarationDraft {
   from: string
   to: string
   shifts: Shift[]
-  approval: string
   note: string
   name: string
   substitute: boolean
@@ -66,7 +65,6 @@ export function newDraft(site = "", estate = ""): DeclarationDraft {
     from: "",
     to: "",
     shifts: [{ name: "Ca 1", from: "", to: "" }],
-    approval: "",
     note: "",
     name: "",
     substitute: false,
@@ -195,9 +193,6 @@ export function validateDeclaration(
       Number(draft.hours) > 720
     )
       errors.hours = "Ngưỡng phải từ 1 đến 720 giờ."
-    if (!draft.approval.trim()) errors.approval = "Vui lòng nhập số phê duyệt."
-    else if (!/^[a-zA-Z0-9_-]{1,255}$/.test(draft.approval.trim()))
-      errors.approval = "Số PD chỉ gồm chữ, số, dấu gạch ngang hoặc gạch dưới."
     if (draft.note.length > 500) errors.note = "Ghi chú tối đa 500 ký tự."
   }
   if (kind === "holidays" && (!draft.name.trim() || draft.name.length > 255))
@@ -258,7 +253,6 @@ export function fromDraft(
         ...version,
         estate: draft.estate,
         hours: Number(draft.hours),
-        approval: draft.approval.trim(),
         note: draft.note.trim(),
       }
     case "holidays":

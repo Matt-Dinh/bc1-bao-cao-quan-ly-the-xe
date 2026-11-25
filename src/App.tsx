@@ -7,6 +7,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Bell,
+  Banknote,
   BookOpen,
   Building2,
   CalendarDays,
@@ -74,11 +75,14 @@ import {
   fmt,
   initialThresholds,
   maxDate,
+  normalize,
   percent,
   screens,
   today,
   vehicles,
 } from "./data"
+import LookupFilterPanel, { lookupMatchHint } from "./LookupFilterPanel"
+import CardLookupMultiFilter from "./CardLookupMultiFilter"
 import type { Card, Filters, Screen, Threshold } from "./data"
 import Operations from "./Operations"
 import SubscriptionManagement from "./SubscriptionManagement"
@@ -88,7 +92,12 @@ import ReportDashboard from "./ReportDashboard"
 import ReportPeriodFields from "./ReportPeriodFields"
 import Parking from "./Parking"
 import useParking from "./useParking"
+import Revenue from "./Revenue"
 import { useRevenueState } from "./useRevenueState"
+import { auditRevenue, cardsWithReceipts, incidentCharges, isRevenueScreen, revenueAccess, revenueMenus, revenueWrite } from "./revenue-model"
+import VoucherNavigation from "./VoucherNavigation"
+import { changeLedger } from "./revenue-operations"
+import type { RevenueScreen } from "./revenue-model"
 import {
   canOpen, dayAt, defaultParkingFilters, demoAccess, displayTime, isParkingScreen,
   overCapacityTripAlert, parkingMenus, parkingRoles, siteById, vnToday,
@@ -118,7 +127,11 @@ import {
   stockMetrics,
 } from "./report-model"
 import type { CardLookupFilters, CirculationGrouping, ReportLookupSelection } from "./report-model"
-import HandoffModeSelector, { BehaviorReportPending, RevenueReportPending } from "./HandoffModeSelector"
+import HandoffModeSelector from "./HandoffModeSelector"
+import Behavior from "./Behavior"
+import { behaviorManagementTitle, behaviorOperations, behaviorOperationsTitle, behaviorReport, behaviorTitle, isBehaviorScreen } from "./behavior-routes"
+import type { BehaviorScreen } from "./behavior-routes"
+import { canEditEvent, canEditHoliday, canReadBehavior } from "./behavior-model"
 import { handoffModeStorageKey, initialHandoffLocation, modeAllowsScreen, modeHome } from "./handoff-mode"
 import type { HandoffMode } from "./handoff-mode"
 
@@ -140,7 +153,7 @@ const operationIcons = {
   lookup: Search,
   incidents: FileCheck2,
 }
-type ModuleScreen = ParkingScreen | "revenue-report" | "behavior-report"
+type ModuleScreen = ParkingScreen | RevenueScreen | BehaviorScreen
 interface LeaveTarget {
   report?: Screen
   operation?: OperationScreen
@@ -152,11 +165,12 @@ interface Change {
   estate: string
   previous: Threshold
   next: Threshold
+  actor: string
   at: string
 }
 const initialHandoff = initialHandoffLocation(window.location.search, (() => {
   try { return localStorage.getItem(handoffModeStorageKey) } catch { return null }
-})(), false)
+})())
 const startupParams = initialHandoff.params
 const getInitial = () => {
   const p = new URLSearchParams(startupParams)
@@ -205,14 +219,14 @@ const getInitial = () => {
 const initial = getInitial()
 function App() {
   const [handoffMode, setHandoffMode] = useState<HandoffMode>(initialHandoff.mode)
-  const modeAllows = (id: string) => modeAllowsScreen(handoffMode, id, false)
+  const modeAllows = (id: string) => modeAllowsScreen(handoffMode, id)
   const [parking, setParking] = useState<ModuleScreen | null>(() => {
     const value = startupParams.get("module")
-    return isParkingScreen(value) || value === "revenue-report" || value === "behavior-report" ? value : null
+    return isParkingScreen(value) || isRevenueScreen(value) || isBehaviorScreen(value) ? value : null
   })
   const [parkingParams, setParkingParams] = useState(() => {
     const params = new URLSearchParams(startupParams)
-    if (!isParkingScreen(params.get("module")) && params.get("module") !== "revenue-report" && params.get("module") !== "behavior-report") return new URLSearchParams()
+    if (!isParkingScreen(params.get("module")) && !isRevenueScreen(params.get("module")) && !isBehaviorScreen(params.get("module"))) return new URLSearchParams()
     params.delete("module")
     params.delete("mode")
     return params
@@ -273,7 +287,32 @@ function App() {
   const [toast, setToast] = useState("")
   const parkingModel = useParking(parkingAccess, setToast)
   const revenueModel = useRevenueState(setToast)
+  const behaviorTripUpdates = useMemo(() => revenueModel.state.tripUpdates?.map(({ trip }) => trip), [revenueModel.state.tripUpdates])
   const [cardOperations, setCardOperations] = useState(()=>withDemoScenarios(seedOperations()))
+  const sharedCards = useMemo(() => cardsWithReceipts(cardOperations, revenueModel.state.receipts),
+    [cardOperations, revenueModel.state.receipts])
+  const updateCardOperations = (next: typeof cardOperations) => {
+    if (next.incidents.length !== sharedCards.incidents.length && Object.keys(revenueModel.state.closes).length) {
+      const before = incidentCharges(sharedCards)
+      const after = incidentCharges(next)
+      const ids = after.filter((row) => !before.some((old) => old.id === row.id)).map((row) => row.id)
+      if (ids.length && !revenueModel.save((state) => {
+        const updated = changeLedger(state, state, [], parkingModel.settings, ids, "Biên bản mất / hỏng sau chốt",
+          parkingModel.actor, revenueWrite(parkingAccess, "adjust"), { before, after })
+        return updated === state ? state : auditRevenue(updated, parkingModel.actor, "Điều chỉnh biên bản mất / hỏng",
+          parkingAccess.estate, ids.join(", "))
+      })) throw new Error("Không thể ghi nhận phí biên bản vào doanh thu.")
+    }
+    const projected = new Map(sharedCards.cards.map((card) => [card.id, card]))
+    const base = new Map(cardOperations.cards.map((card) => [card.id, card]))
+    const projectedSubscriptions = new Map(sharedCards.subscriptions.map((row) => [row.id, row]))
+    const baseSubscriptions = new Map(cardOperations.subscriptions.map((row) => [row.id, row]))
+    setCardOperations({ ...next, cards: next.cards.map((card) =>
+      card === projected.get(card.id) ? base.get(card.id) ?? card : card),
+      subscriptions: next.subscriptions.map((row) =>
+        row === projectedSubscriptions.get(row.id) ? baseSubscriptions.get(row.id) ?? row : row),
+    })
+  }
   const [notifications, setNotifications] = useState(false)
   const [help, setHelp] = useState(false)
   const [mobile, setMobile] = useState(false)
@@ -288,7 +327,9 @@ function App() {
   })
   const [originalEdit, setOriginalEdit] = useState("")
   const [changes, setChanges] = useState<Change[]>([])
-  const [settingsTab, setSettingsTab] = useState(0)
+  const [settingsHistoryOpen, setSettingsHistoryOpen] = useState(false)
+  const [settingsFilter, setSettingsFilter] = useState({ q: "", estates: [] as string[], statuses: [] as string[] })
+  const [settingsFilterDraft, setSettingsFilterDraft] = useState({ q: "", estates: [] as string[], statuses: [] as string[] })
   const [discard, setDiscard] = useState(false)
   const [account, setAccount] = useState(false)
   const [sortKey, setSortKey] = useState(() => {
@@ -391,9 +432,9 @@ function App() {
   const warningCount = dashboard.warned
   const lookupResult = useMemo(
     () => operation === "lookup" && lookupFilters
-      ? lookupCards(lookupFilters, (estate) => currentThreshold(estate, lookupSnapshotDay(lookupFilters)), cardOperations.cards)
+      ? lookupCards(lookupFilters, (estate) => currentThreshold(estate, lookupSnapshotDay(lookupFilters)), sharedCards.cards)
       : null,
-    [operation, lookupFilters, thresholds, cardOperations.cards],
+    [operation, lookupFilters, thresholds, sharedCards.cards],
   )
   const baseCards = useMemo(
     () => filterCards(reportCards, applied, query, screen === "stock"),
@@ -629,6 +670,7 @@ function App() {
         estate: editing,
         previous: thresholds[editing],
         next: { ...edit },
+        actor: parkingRoles[parkingAccess.role],
         at: "29/10/2026 14:30",
       },
       ...old,
@@ -1746,224 +1788,289 @@ function App() {
       </>
     )
   }
+  async function exportSettings() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const XLSX = await import("xlsx")
+      const wb = XLSX.utils.book_new()
+      const scoped = estates.filter(
+        (e) => !parkingAccess.estate || e.id === parkingAccess.estate,
+      )
+      const rows = scoped.map((e) => ({
+        "Khu đô thị": e.name,
+        "Mã KĐT": e.code,
+        "Sắp hết hạn (ngày)": thresholds[e.id].expiry,
+        "Định mức mất / hỏng (%)": thresholds[e.id].loss,
+        "Không sử dụng (ngày)": thresholds[e.id].unused,
+        "Áp dụng từ": date(thresholds[e.id].effective),
+        "Trạng thái":
+          thresholds[e.id].effective > today ? "Sắp áp dụng" : "Đang áp dụng",
+      }))
+      const ws = XLSX.utils.json_to_sheet(rows)
+      ws["!cols"] = Object.keys(rows[0] || {}).map(() => ({ wch: 24 }))
+      XLSX.utils.book_append_sheet(wb, ws, "ThamSoBaoCaoTheXe")
+      XLSX.writeFile(wb, `ThamSoBaoCaoTheXe_${today}.xlsx`)
+      setToast("Đã xuất tham số báo cáo thẻ xe.")
+    } catch {
+      setToast("Không thể xuất dữ liệu. Vui lòng thử lại.")
+    } finally {
+      setExporting(false)
+    }
+  }
   function renderSettings() {
+    const scopedEstates = estates.filter(
+      (e) => !parkingAccess.estate || e.id === parkingAccess.estate,
+    )
+    const statusOf = (id: string) =>
+      thresholds[id].effective > today ? "Sắp áp dụng" : "Đang áp dụng"
+    const visibleEstates = scopedEstates.filter((e) => {
+      const q = normalize(settingsFilter.q)
+      const matchesQ = !q || normalize(`${e.name} ${e.code} ${e.short}`).includes(q)
+      const matchesEstate =
+        !settingsFilter.estates.length || settingsFilter.estates.includes(e.id)
+      const matchesStatus =
+        !settingsFilter.statuses.length ||
+        settingsFilter.statuses.includes(statusOf(e.id))
+      return matchesQ && matchesEstate && matchesStatus
+    })
+    const scopedChanges = changes.filter(
+      (c) =>
+        (!parkingAccess.estate || c.estate === parkingAccess.estate) &&
+        (!settingsFilter.estates.length ||
+          settingsFilter.estates.includes(c.estate)),
+    )
+    const pendingFilter =
+      JSON.stringify(settingsFilterDraft) !== JSON.stringify(settingsFilter)
+    const clearSettingsFilters = () => {
+      const empty = { q: "", estates: [] as string[], statuses: [] as string[] }
+      setSettingsFilterDraft(empty)
+      setSettingsFilter(empty)
+    }
+    const canEditCardSettings = ["admin", "manager", "it"].includes(
+      parkingAccess.role,
+    )
     return (
       <>
         <div className="settings-info">
-          <Info size={17} />
+          <Info size={16} />
           <span>
             Tham số được thiết lập theo khu đô thị. Thay đổi chỉ áp dụng từ ngày
             hiệu lực, không làm thay đổi báo cáo của các ngày trước.
           </span>
         </div>
-        <section className="panel">
-          <div className="settings-tabs">
-            {["Tham số đang áp dụng", "Lịch sử thay đổi"].map((n, i) => (
-              <Button
-                variant="ghost"
-                key={n}
-                className={settingsTab === i ? "selected" : ""}
-                onClick={() => setSettingsTab(i)}
-              >
-                {i === 0 ? <Settings2 size={16} /> : <History size={16} />}
-                {n}
-                {i === 1 && changes.length > 0 && (
-                  <span className="tab-counter">{changes.length}</span>
-                )}
-              </Button>
-            ))}
+        <LookupFilterPanel
+          label="Bộ lọc Tham số báo cáo thẻ xe"
+          pending={pendingFilter}
+          onApply={() => setSettingsFilter(settingsFilterDraft)}
+          onClear={clearSettingsFilters}
+        >
+          <div className="filter-grid config-filter-grid">
+            <Field label="Tìm kiếm">
+              <Input
+                type="search"
+                aria-label="Tìm khu đô thị"
+                maxLength={100}
+                placeholder="Tên hoặc mã khu đô thị…"
+                value={settingsFilterDraft.q}
+                onChange={(e) =>
+                  setSettingsFilterDraft((prev) => ({
+                    ...prev,
+                    q: e.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <CardLookupMultiFilter
+              label="Khu đô thị"
+              value={settingsFilterDraft.estates}
+              allLabel="Tất cả khu đô thị"
+              options={scopedEstates.map((e) => ({
+                value: e.id,
+                label: e.name,
+              }))}
+              onChange={(estates) =>
+                setSettingsFilterDraft((prev) => ({ ...prev, estates }))
+              }
+            />
+            <CardLookupMultiFilter
+              label="Trạng thái"
+              value={settingsFilterDraft.statuses}
+              allLabel="Tất cả trạng thái"
+              options={["Đang áp dụng", "Sắp áp dụng"].map((value) => ({
+                value,
+                label: value,
+              }))}
+              onChange={(statuses) =>
+                setSettingsFilterDraft((prev) => ({ ...prev, statuses }))
+              }
+            />
           </div>
-          {settingsTab === 0 ? (
+          <p className="lookup-multi-hint">{lookupMatchHint}</p>
+        </LookupFilterPanel>
+        <section className="panel">
+          <div className="op-table-toolbar lookup-table-toolbar">
+            <div className="lookup-result-summary">
+              <span className="count-text" aria-live="polite">
+                <strong>{fmt(visibleEstates.length)}</strong> khu đô thị
+              </span>
+            </div>
+            <Button onClick={() => setSettingsHistoryOpen(true)}>
+              <History size={15} /> Lịch sử thay đổi
+              {scopedChanges.length > 0 && (
+                <span className="tab-counter">{scopedChanges.length}</span>
+              )}
+            </Button>
+          </div>
+          {visibleEstates.length ? (
             <div className="table-scroll">
-              <table className="data-table settings-table">
+              <table className="data-table op-table">
                 <thead>
                   <tr>
                     <th>Khu đô thị</th>
-                    <th>
+                    <th className="parking-number">
                       Sắp hết hạn <span className="header-unit">(ngày)</span>
                     </th>
-                    <th>
+                    <th className="parking-number">
                       Định mức mất / hỏng{" "}
                       <span className="header-unit">(%)</span>
                     </th>
-                    <th>
+                    <th className="parking-number">
                       Không sử dụng <span className="header-unit">(ngày)</span>
                     </th>
-                    <th>Ngày áp dụng</th>
+                    <th>Áp dụng từ</th>
+                    <th>Trạng thái</th>
                     <th>Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {estates.map((e) => (
-                    <tr key={e.id}>
-                      <td>
-                        <div className="estate-name-cell">
-                          <span className="estate-icon">
-                            <Building2 size={18} />
-                          </span>
-                          <span>
-                            <strong>{e.name}</strong>
-                            <span className="estate-code">{e.code}</span>
-                          </span>
-                        </div>
-                      </td>
-                      <td>{thresholds[e.id].expiry}</td>
-                      <td>{percent(thresholds[e.id].loss, 2)}</td>
-                      <td>{thresholds[e.id].unused}</td>
-                      <td>
-                        {date(thresholds[e.id].effective)}
-                        {thresholds[e.id].effective > today && (
-                          <Badge tone="amber">Chờ áp dụng</Badge>
-                        )}
-                      </td>
-                      <td>
-                        <Button
-                          variant="ghost"
-                          onClick={() => {
-                            const value = {
-                              ...thresholds[e.id],
-                              effective: "2026-10-30",
-                            }
-                            setEditing(e.id)
-                            setEdit(value)
-                            setOriginalEdit(JSON.stringify(value))
-                          }}
-                        >
-                          <Pencil size={14} />
-                          Sửa
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : changes.length ? (
-            <div className="table-scroll">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    {[
-                      "Khu đô thị",
-                      "Tham số",
-                      "Giá trị cũ → mới",
-                      "Ngày áp dụng",
-                      "Người thay đổi",
-                      "Thời điểm",
-                    ].map((n) => (
-                      <th key={n}>{n}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {changes.flatMap((c, ci) =>
-                    (["expiry", "loss", "unused", "effective"] as const)
-                      .filter((k) => c.previous[k] !== c.next[k])
-                      .map((k) => (
-                        <tr key={`${ci}-${k}`}>
-                          <td>{estateName(c.estate)}</td>
-                          <td>
-                            {
-                              {
-                                expiry: "Ngưỡng sắp hết hạn",
-                                loss: "Định mức mất / hỏng",
-                                unused: "Số ngày không sử dụng",
-                                effective: "Ngày bắt đầu áp dụng",
-                              }[k]
-                            }
-                          </td>
-                          <td>
-                            <span className="muted">
-                              {k === "effective"
-                                ? date(String(c.previous[k]))
-                                : c.previous[k]}
+                  {visibleEstates.map((e) => {
+                    const state = statusOf(e.id)
+                    return (
+                      <tr key={e.id}>
+                        <td>
+                          <div className="estate-name-cell">
+                            <span className="estate-icon">
+                              <Building2 size={16} />
                             </span>
-                            <ArrowRight size={13} className="inline-icon" />
-                            <strong>
-                              {k === "effective"
-                                ? date(String(c.next[k]))
-                                : c.next[k]}{" "}
-                              {k === "effective"
-                                ? ""
-                                : k === "loss"
-                                  ? "%"
-                                  : "ngày"}
-                            </strong>
-                          </td>
-                          <td>{date(c.next.effective)}</td>
-                          <td>Admin Local</td>
-                          <td>{c.at}</td>
-                        </tr>
-                      )),
-                  )}
+                            <span>
+                              <strong>{e.name}</strong>
+                              <span className="estate-code">{e.code}</span>
+                            </span>
+                          </div>
+                        </td>
+                        <td className="parking-number">
+                          {thresholds[e.id].expiry}
+                        </td>
+                        <td className="parking-number">
+                          {percent(thresholds[e.id].loss, 2)}
+                        </td>
+                        <td className="parking-number">
+                          {thresholds[e.id].unused}
+                        </td>
+                        <td>{date(thresholds[e.id].effective)}</td>
+                        <td>
+                          <Badge tone={state === "Sắp áp dụng" ? "amber" : "green"}>
+                            {state}
+                          </Badge>
+                        </td>
+                        <td>
+                          <div className="op-row-actions">
+                            {canEditCardSettings ? (
+                              <Button
+                                variant="ghost"
+                                title="Sửa tham số"
+                                aria-label={`Sửa tham số ${e.name}`}
+                                onClick={() => {
+                                  const value = {
+                                    ...thresholds[e.id],
+                                    effective: "2026-10-30",
+                                  }
+                                  setEditing(e.id)
+                                  setEdit(value)
+                                  setOriginalEdit(JSON.stringify(value))
+                                }}
+                              >
+                                <Pencil size={14} />
+                              </Button>
+                            ) : (
+                              "—"
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
           ) : (
-            <div className="empty-state">
-              <div className="empty-icon">
-                <History size={26} />
-              </div>
-              <Heading level={3}>Chưa có thay đổi trong phiên này</Heading>
-              <span className="muted">
-                Các thay đổi tham số sẽ được ghi lại tại đây.
-              </span>
+            <div className="parking-empty">
+              <p>Không có khu đô thị phù hợp</p>
+              <Button onClick={clearSettingsFilters}>Xóa bộ lọc</Button>
             </div>
           )}
           <div className="table-bottom">
-            <span>{estates.length} khu đô thị trong phạm vi quyền</span>
+            <span>{scopedEstates.length} khu đô thị trong phạm vi quyền</span>
             <span>
               <ShieldCheck size={14} />
               Chỉ người có quyền mới có thể sửa tham số
             </span>
           </div>
         </section>
-        <div className="parameter-guide">
-          {[
-            {
-              code: "P-01",
-              title: "Ngưỡng sắp hết hạn",
-              description:
-                "Số ngày còn lại trước khi thẻ hết hiệu lực để bắt đầu cảnh báo.",
-              value: "7 ngày",
-              limit: "Từ 1 đến 90 ngày",
-              icon: <Clock3 size={19} />,
-            },
-            {
-              code: "P-02",
-              title: "Định mức mất / hỏng",
-              description:
-                "Tỷ lệ mất / hỏng tối đa trên tổng số thẻ đầu kỳ của khu đô thị.",
-              value: "5%",
-              limit: "Từ 0 đến 100%",
-              icon: <ShieldCheck size={19} />,
-            },
-            {
-              code: "P-03",
-              title: "Số ngày không sử dụng",
-              description:
-                "Số ngày tối thiểu không có lượt xe để phát hiện thẻ không sử dụng.",
-              value: "30 ngày",
-              limit: "Từ 1 đến 365 ngày",
-              icon: <CreditCard size={19} />,
-            },
-          ].map((p) => (
-            <section className="panel parameter-card" key={p.code}>
-              <div className="parameter-top">
-                <span className="note-icon">{p.icon}</span>
-                <span className="parameter-code">{p.code}</span>
-              </div>
-              <Heading level={3}>{p.title}</Heading>
-              <div className="muted">{p.description}</div>
-              <div className="parameter-default">
-                <span>
-                  Mặc định <strong>{p.value}</strong>
-                </span>
-                <span className="muted">{p.limit}</span>
-              </div>
-            </section>
-          ))}
-        </div>
+        {settingsHistoryOpen && (
+          <Overlay
+            drawer
+            title="Lịch sử thay đổi"
+            subtitle="Các thay đổi tham số báo cáo thẻ xe trong phiên."
+            onClose={() => setSettingsHistoryOpen(false)}
+            footer={
+              <Button onClick={() => setSettingsHistoryOpen(false)}>Đóng</Button>
+            }
+          >
+            {scopedChanges.length ? (
+              scopedChanges.map((c, ci) => {
+                const diffs = (["expiry", "loss", "unused", "effective"] as const).filter(
+                  (k) => c.previous[k] !== c.next[k],
+                )
+                return (
+                  <div className="parking-history-entry" key={ci}>
+                    <strong>Sửa tham số · {estateName(c.estate)}</strong>
+                    <span>
+                      {c.actor} · {c.at}
+                    </span>
+                    {diffs.map((k) => {
+                      const label = {
+                        expiry: "Ngưỡng sắp hết hạn",
+                        loss: "Định mức mất / hỏng",
+                        unused: "Số ngày không sử dụng",
+                        effective: "Ngày bắt đầu áp dụng",
+                      }[k]
+                      const unit =
+                        k === "effective" ? "" : k === "loss" ? "%" : " ngày"
+                      const prevVal =
+                        k === "effective"
+                          ? date(String(c.previous[k]))
+                          : `${c.previous[k]}${unit}`
+                      const nextVal =
+                        k === "effective"
+                          ? date(String(c.next[k]))
+                          : `${c.next[k]}${unit}`
+                      return (
+                        <div key={k}>
+                          <span className="muted">{label}:</span> {prevVal} →{" "}
+                          <strong>{nextVal}</strong>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })
+            ) : (
+              <div className="parking-empty">Chưa có thay đổi trong phiên này</div>
+            )}
+          </Overlay>
+        )}
       </>
     )
   }
@@ -2002,8 +2109,20 @@ function App() {
       </Button>
     })
   }
+  function renderRevenueMenu(group: typeof revenueMenus[number]["group"]) {
+    return revenueMenus.filter((menu) => menu.group === group && modeAllows(menu.id) && revenueAccess(parkingAccess, menu.id)).map((menu) => {
+      const active = parking === menu.id
+      const Icon = menu.group === "Báo cáo" ? FileBarChart2 : menu.group === "Cấu hình" ? Settings2 : Banknote
+      return <Button key={menu.id} variant="ghost" className={`subnav-item ${active ? "active" : ""}`}
+        aria-current={active ? "page" : undefined} onClick={() => chooseParking(menu.id)}>
+        <Icon size={15} /><span>{menu.title}</span>{active && <span className="active-dot" />}
+      </Button>
+    })
+  }
+  const firstRevenueOperation = revenueMenus.find((menu) => menu.group === "Quản lý doanh thu" && modeAllows(menu.id) && revenueAccess(parkingAccess, menu.id))
   const firstParkingOperation = parkingMenus.find(menu => menu.group === "Quản lý chỗ đỗ" && menu.id !== "parking-alerts" && modeAllows(menu.id) && canOpen(parkingAccess, menu.id))
-  const firstConfiguration = modeAllows("settings") ? "settings" : parkingMenus.find(menu => menu.group === "Cấu hình" && modeAllows(menu.id) && canOpen(parkingAccess, menu.id))?.id
+  const firstConfiguration = modeAllows("settings") ? "settings" : parkingMenus.find(menu => menu.group === "Cấu hình" && modeAllows(menu.id) && canOpen(parkingAccess, menu.id))?.id ??
+    revenueMenus.find(menu => menu.group === "Cấu hình" && modeAllows(menu.id) && revenueAccess(parkingAccess, menu.id))?.id
 
   return (
     <div className={`app ${collapsed ? "sidebar-collapsed" : ""}`}>
@@ -2105,6 +2224,29 @@ function App() {
             </Button>
             <div className="subnav">{renderParkingMenu("Quản lý chỗ đỗ")}</div>
           </div>}
+          {firstRevenueOperation && <div className="nav-section" role="group" aria-label="Quản lý doanh thu">
+            <Button variant="ghost" className="nav-item nav-section-label" aria-label="Quản lý doanh thu" title="Quản lý doanh thu"
+              onClick={() => chooseParking(firstRevenueOperation.id)}>
+              <Banknote size={18} /><span>Quản lý doanh thu</span><ChevronDown size={14} />
+            </Button>
+            <div className="subnav">{renderRevenueMenu("Quản lý doanh thu")}</div>
+          </div>}
+          {((modeAllows("revenue-voucher") && revenueAccess(parkingAccess, "revenue-voucher")) || (modeAllows("revenue-debt") && revenueAccess(parkingAccess, "revenue-debt"))) && <VoucherNavigation active={parking === "revenue-voucher"} params={parkingParams}
+            canBrowse={modeAllows("revenue-voucher") && revenueAccess(parkingAccess, "revenue-voucher")}
+            debt={modeAllows("revenue-debt") && revenueAccess(parkingAccess, "revenue-debt") ? { active: parking === "revenue-debt", open: () => chooseParking("revenue-debt") } : undefined}
+            canCreate={revenueWrite(parkingAccess, "voucher")} open={(patch) => chooseParking("revenue-voucher", patch)} />}
+          {modeAllows(behaviorOperations) && (canEditEvent(parkingAccess) || canEditHoliday(parkingAccess)) && <div className="nav-section behavior-operations-nav" role="group" aria-label={behaviorOperationsTitle}>
+            <Button variant="ghost" className="nav-item nav-section-label" title={behaviorOperationsTitle}
+              onClick={() => chooseParking(behaviorOperations)}>
+              <Users size={18} /><span>{behaviorOperationsTitle}</span><ChevronDown size={14} />
+            </Button>
+            <div className="subnav">
+              <Button variant="ghost" className={`subnav-item ${parking === behaviorOperations ? "active" : ""}`}
+                aria-current={parking === behaviorOperations ? "page" : undefined} onClick={() => chooseParking(behaviorOperations)}>
+                <CalendarDays size={15} /><span>{behaviorManagementTitle}</span>{parking === behaviorOperations && <span className="active-dot" />}
+              </Button>
+            </div>
+          </div>}
           <div className="nav-section" role="group" aria-label="Báo cáo">
             <Button
               variant="ghost"
@@ -2148,13 +2290,11 @@ function App() {
                   )
                 })}
               {renderParkingMenu("Báo cáo")}
-              {modeAllows("revenue-report") && <Button variant="ghost" className={`subnav-item ${parking === "revenue-report" ? "active" : ""}`}
-                aria-current={parking === "revenue-report" ? "page" : undefined} onClick={() => chooseParking("revenue-report")}>
-                <FileBarChart2 size={15} /><span>Báo cáo doanh thu</span>{parking === "revenue-report" && <span className="active-dot" />}
-              </Button>}
-              {modeAllows("behavior-report") && <Button variant="ghost" className={`subnav-item ${parking === "behavior-report" ? "active" : ""}`}
-                aria-current={parking === "behavior-report" ? "page" : undefined} onClick={() => chooseParking("behavior-report")}>
-                <Users size={15} /><span>Báo cáo phân tích hành vi khách hàng</span>{parking === "behavior-report" && <span className="active-dot" />}
+              {renderRevenueMenu("Báo cáo")}
+              {modeAllows(behaviorReport) && canReadBehavior(parkingAccess) && <Button variant="ghost"
+                className={`subnav-item ${parking === behaviorReport ? "active" : ""}`}
+                aria-current={parking === behaviorReport ? "page" : undefined} onClick={() => chooseParking(behaviorReport)}>
+                <FileBarChart2 size={15} /><span>{behaviorTitle}</span>{parking === behaviorReport && <span className="active-dot" />}
               </Button>}
             </div>
           </div>
@@ -2170,20 +2310,24 @@ function App() {
               <span>Cấu hình</span>
               <ChevronDown size={14} />
             </Button>
-            {modeAllows("settings") && <Button
-              variant="ghost"
-              className={`subnav-item config-item ${
-                !operation && !parking && screen === "settings" ? "active" : ""
-              }`}
-              aria-current={
-                !operation && !parking && screen === "settings" ? "page" : undefined
-              }
-              onClick={() => navigate("settings")}
-            >
-              <span className="small-nav-line" />
-              <span>Tham số báo cáo thẻ xe</span>
-            </Button>}
-            <div className="subnav">{renderParkingMenu("Cấu hình")}</div>
+            <div className="subnav">
+              {modeAllows("settings") && <Button
+                variant="ghost"
+                className={`subnav-item ${
+                  !operation && !parking && screen === "settings" ? "active" : ""
+                }`}
+                aria-current={
+                  !operation && !parking && screen === "settings" ? "page" : undefined
+                }
+                onClick={() => navigate("settings")}
+              >
+                <Settings2 size={15} />
+                <span>Tham số báo cáo thẻ xe</span>
+                {!operation && !parking && screen === "settings" && <span className="active-dot" />}
+              </Button>}
+              {renderParkingMenu("Cấu hình")}
+              {renderRevenueMenu("Cấu hình")}
+            </div>
           </div>}
         </nav>
         <div className="sidebar-bottom">
@@ -2334,7 +2478,7 @@ function App() {
                   <strong>{parkingRoles[parkingAccess.role]}</strong>
                   <div className="account-access">
                     <ShieldCheck size={15} />
-                    Phân quyền báo cáo chỗ đỗ
+                    Phân quyền báo cáo chỗ đỗ và doanh thu
                   </div>
                   <div className="muted">
                     Phiên bản thiết kế · Dữ liệu minh họa
@@ -2351,8 +2495,8 @@ function App() {
           </div>
         </header>
         <main>
-          {operation && isManagementScreen(operation) && <SubscriptionManagement screen={operation} state={cardOperations}
-            onChange={setCardOperations} onNavigate={navigateManagement} onCard={openManagedCard}
+          {operation && isManagementScreen(operation) && <SubscriptionManagement screen={operation} state={sharedCards}
+            onChange={updateCardOperations} onNavigate={navigateManagement} onCard={openManagedCard}
             notify={setToast} onDirty={setOperationDirty} focusId={operationFocus} onFocused={() => setOperationFocus(null)} />}
           {operation === "lookup" && managementOrigin && <Button className="sm-back-link" variant="ghost" onClick={() => navigateManagement("subscriptions", managementOrigin)}><ArrowLeft size={14} />Quay lại thuê bao</Button>}
           <Operations
@@ -2366,14 +2510,24 @@ function App() {
             onLookup={openWarehouseLookup}
             onDirtyChange={setOperationDirty}
             onNotify={setToast}
-            sharedState={cardOperations}
-            onStateChange={setCardOperations}
+            sharedState={sharedCards}
+            onStateChange={updateCardOperations}
           />
           {parking && isParkingScreen(parking) && <Parking key={`${parkingAccess.role}/${parkingAccess.estate}`} screen={parking} params={parkingParams}
             access={parkingAccess} model={parkingModel} update={updateParking} navigate={chooseParking}
-            home={navigateHome} onDirty={setParkingDirty} notify={setToast} revenue={revenueModel} />}
-          {parking === "revenue-report" && <RevenueReportPending />}
-          {parking === "behavior-report" && <BehaviorReportPending />}
+            home={navigateHome} onDirty={setParkingDirty} notify={setToast} revenue={modeAllows("revenue-lookup") ? revenueModel : undefined}
+            tripUpdates={modeAllows(behaviorReport) ? behaviorTripUpdates : undefined} />}
+          {parking && isRevenueScreen(parking) && <Revenue key={`${parking}/${parkingAccess.role}/${parkingAccess.estate}`}
+            screen={parking} params={parkingParams} access={parkingAccess} model={parkingModel}
+            state={revenueModel.state} save={revenueModel.save} update={updateParking} operations={sharedCards}
+            navigate={(patch, screen = parking, preserve = true) => chooseParking(screen, patch, preserve)}
+            home={navigateHome} notify={setToast} onDirty={setParkingDirty}
+            openParking={(trip, day) => chooseParking("parking-trips", { trip, start: day, end: day > parkingModel.cutoff ? parkingModel.cutoff : day })} />}
+          {parking && isBehaviorScreen(parking) && <Behavior key={`${parking}/${parkingAccess.role}/${parkingAccess.estate}`} screen={parking}
+            access={parkingAccess} params={parkingParams} model={parkingModel} tripUpdates={behaviorTripUpdates}
+            update={updateParking} notify={setToast} onDirty={setParkingDirty}
+            manageEvent={(id, origin) => chooseParking(behaviorOperations, { configView: "Sự kiện", focusEvent: id, fromEvent: origin })}
+            backToReport={(origin) => chooseParking(behaviorReport, Object.fromEntries(new URLSearchParams(origin)))} />}
           <div hidden={!!operation || !!parking}>
             <div className="breadcrumbs">
               <span>{screen === "settings" ? "Cấu hình" : "Báo cáo"}</span>
@@ -2390,17 +2544,28 @@ function App() {
               <div>
                 <div className="heading-line">
                   <Heading level={1}>{title.title}</Heading>
-                  <span className="page-tag">
-                    {screen === "settings"
-                      ? "Cấu hình"
-                      : screen === "cards"
+                  {screen !== "settings" && (
+                    <span className="page-tag">
+                      {screen === "cards"
                         ? "Chi tiết báo cáo"
                         : "Báo cáo thẻ xe"}
-                  </span>
+                    </span>
+                  )}
                 </div>
                 <div className="page-description">{title.description}</div>
               </div>
-              {screen !== "settings" && (
+              {screen === "settings" ? (
+                <div className="op-heading-actions">
+                  <Button onClick={exportSettings} disabled={exporting}>
+                    {exporting ? (
+                      <LoaderCircle size={15} className="spin" />
+                    ) : (
+                      <Download size={15} />
+                    )}
+                    Xuất dữ liệu
+                  </Button>
+                </div>
+              ) : (
                 <Button
                   className="export-button"
                   onClick={exportReport}

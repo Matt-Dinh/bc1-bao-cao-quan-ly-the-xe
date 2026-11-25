@@ -2,15 +2,19 @@ import { estates, normalize } from "./data"
 import { allowedSites, dayAt, dayMinutes, daysIn, dayStart, effectiveRecord, isDay, minuteIso, shiftDay, siteById, timeMinutes, timeSpan, vnNow } from "./parking-model"
 import type { ParkingAccess, ParkingSettings, Trip, Vehicle } from "./parking-model"
 import type { OperationState } from "./operations-model"
+import { applyVoucherApplications, initialVoucherWorkspace, normalizeVoucherWorkspace } from "./revenue-vouchers"
+import type { VoucherUnit, VoucherWorkspace } from "./revenue-vouchers"
+import { withRevenueDemo } from "./revenue-demo"
+import { revenueMatches, revenueIntersects } from "./revenue-filter-values"
 
 export const revenueMenus = [
   { id: "revenue-report", title: "Báo cáo doanh thu", group: "Báo cáo" },
   { id: "revenue-lookup", title: "Tra cứu doanh thu", group: "Quản lý doanh thu" },
-  { id: "revenue-close", title: "Chốt số liệu", group: "Quản lý doanh thu" },
-  { id: "revenue-debt", title: "Thanh toán công nợ", group: "Quản lý doanh thu" },
-  { id: "revenue-paper", title: "Nhập vé giấy", group: "Quản lý doanh thu" },
-  { id: "revenue-receipt", title: "Phiếu thu cấp thẻ", group: "Quản lý doanh thu" },
-  { id: "revenue-voucher", title: "Voucher", group: "Quản lý doanh thu" },
+  { id: "revenue-close", title: "Doanh thu tổng hợp", group: "Quản lý doanh thu" },
+  { id: "revenue-debt", title: "Công nợ voucher", group: "Voucher" },
+  { id: "revenue-paper", title: "Thu tiền tại bãi", group: "Chứng từ và lịch sử" },
+  { id: "revenue-receipt", title: "Phiếu thu cấp thẻ", group: "Chứng từ và lịch sử" },
+  { id: "revenue-voucher", title: "Voucher", group: "Voucher" },
   { id: "revenue-policies", title: "Chính sách miễn / giảm", group: "Cấu hình" },
   { id: "revenue-settings", title: "Cấu hình doanh thu", group: "Cấu hình" },
 ] as const
@@ -23,7 +27,7 @@ export function revenueAccess(access: ParkingAccess, screen: RevenueScreen) {
     case "security": return ["revenue-report", "revenue-lookup", "revenue-close", "revenue-paper"].includes(screen)
     case "customer": return ["revenue-lookup", "revenue-receipt"].includes(screen)
     case "manager": return !["revenue-policies", "revenue-receipt"].includes(screen)
-    case "finance": return !["revenue-paper", "revenue-receipt", "revenue-voucher"].includes(screen)
+    case "finance": return !["revenue-paper", "revenue-receipt"].includes(screen)
     case "it": return ["revenue-settings", "revenue-report", "revenue-lookup"].includes(screen)
     default: return ["revenue-report", "revenue-lookup", "revenue-policies", "revenue-close", "revenue-debt"].includes(screen)
   }
@@ -58,7 +62,7 @@ export type Transaction = { id: string; at: number; method: Method; amount: numb
 export type Discount = { code: string; amount: number; review?: boolean }
 export type Charge = {
   id: string; site: string; vehicle: Vehicle; at: number; day?: string; shift?: string; source: RevenueSource;
-  count: number; price: number; discounts: Discount[]; payments: Transaction[]; voucher?: { code: string; unit: string; amount: number; negative: boolean };
+  count: number; price: number; discounts: Discount[]; payments: Transaction[]; voucher?: { code: string; unit: string; amount: number; negative: boolean; recipient?: VoucherUnit };
   reason?: typeof lossReasons[number]; trip?: Trip; description?: string; missing?: boolean
 }
 export type LedgerRow = Charge & {
@@ -79,7 +83,11 @@ export type RevenueState = {
   configs: Config[]; policies: Policy[]; papers: PaperBatch[]; receipts: Receipt[]; payments: Payment[];
   vouchers: Voucher[]; closes: Record<string, Closing>; periods: Record<string, Closing>;
   changes: RevenueChange[]; audit: RevenueAudit[]; tripUpdates: TripUpdate[];
+  voucherWorkspace?: VoucherWorkspace;
+  demoVersion?: number; demoAnchor?: string; demoCharges?: Charge[];
 }
+export const revenueVoucherWorkspace = (state: RevenueState) => normalizeVoucherWorkspace(state, demoUnits)
+export const revenueUnits = (state: RevenueState) => state.voucherWorkspace?.units ?? demoUnits.map((unit) => ({ ...unit, active: true }))
 const fallbackConfig = { from: "2026-01-01", hour: "07:00", vat: 10, vatFrom: "2026-01-01", overdue: 30, mall: "", company: "", branch: "", customer: "" }
 export const configAt = (state: RevenueState, estate: string, day: string) => {
   const versions = state.configs.filter((row) => row.estate === estate)
@@ -96,7 +104,7 @@ export function revenueDay(at: number, estate: string, state: RevenueState) {
   return at - dayStart(day) < timeMinutes(configAt(state, estate, day).hour) ? shiftDay(day, -1) : day
 }
 export function revenueCutoff(state: RevenueState, estate = "", now = vnNow()) {
-  const active = estates.filter((item) => !estate || item.id === estate)
+  const active = estates.filter((item) => revenueMatches(item.id, estate))
   return active.map((item) => shiftDay(revenueDay(now - 30, item.id, state), -1)).sort()[0] ?? shiftDay(dayAt(now), -1)
 }
 export type RevenueFilter = { estate: string; site: string; vehicle: string; start: string; end: string }
@@ -178,12 +186,18 @@ export function initialRevenueState(): RevenueState {
       code: String(code), name: String(name), kind: String(kind), value: Number(value), order: index + 1,
       from: "2026-09-01", until: "", sites: [], vehicle: "", payer: "VCR", note: "", active: true,
     })),
-    papers: [], receipts: [], payments: [], vouchers: [], closes: {}, periods: {}, changes: [], audit: [], tripUpdates: [],
+    papers: [], receipts: [], payments: [], vouchers: [], closes: {}, periods: {}, changes: [], audit: [], tripUpdates: [], voucherWorkspace: initialVoucherWorkspace(demoUnits),
   }
 }
 export const revenueStorageKey = "vparking:revenue:v1"
 export function readRevenueState() {
-  try { return JSON.parse(localStorage.getItem(revenueStorageKey) || "null") as RevenueState | null ?? initialRevenueState() }
+  try {
+    const state = JSON.parse(localStorage.getItem(revenueStorageKey) || "null") as RevenueState | null ?? initialRevenueState()
+    const normalized = { ...state, voucherWorkspace: revenueVoucherWorkspace(state) }
+    const ready = withRevenueDemo(normalized)
+    if (ready !== normalized) { try { localStorage.setItem(revenueStorageKey, JSON.stringify(ready)) } catch { /* Keep the demonstration usable when storage is full. */ } }
+    return ready
+  }
   catch { return initialRevenueState() }
 }
 export const estateName = (id: string) => estates.find((estate) => estate.id === id)?.name ?? "—"
@@ -194,8 +208,8 @@ export const chargeMatches = (row: LedgerRow, text: string) => {
 }
 export const scopeRows = (rows: LedgerRow[], filter: RevenueFilter, access: ParkingAccess, byVehicle = true) => {
   const sites = new Set(allowedSites(access).map((site) => site.id))
-  return rows.filter((row) => sites.has(row.site) && (!filter.site || row.site === filter.site) &&
-    (!filter.estate || row.estate === filter.estate) && (!byVehicle || !filter.vehicle || row.vehicle === filter.vehicle) &&
+  return rows.filter((row) => sites.has(row.site) && revenueMatches(row.site, filter.site) &&
+    revenueMatches(row.estate, filter.estate) && (!byVehicle || revenueMatches(row.vehicle, filter.vehicle)) &&
     row.revenueDay >= filter.start && row.revenueDay <= filter.end)
 }
 const demoTransaction = (id: string, amount: number, at: number, method: Method): Transaction =>
@@ -243,8 +257,10 @@ export function chargeForTrip(trip: Trip): Charge | null {
   const estate = siteById(trip.site)?.estate ?? ""
   const hasVoucher = afterDiscount > 0 && !isSupplement && (trip.voucher > 0 || index % 41 === 0)
   const negative = hasVoucher && index % 3 !== 0
-  const voucher = hasVoucher ? { code: `VC-${trip.id}`, unit: `${estate}-DV${negative ? index % 2 + 1 : 3}`, negative,
-    amount: negative ? afterDiscount : Math.round(afterDiscount / 2) } : undefined
+  const unitId = `${estate}-DV${negative ? index % 2 + 1 : 3}`
+  const recipient = demoUnits.find((unit) => unit.id === unitId)
+  const voucher = hasVoucher ? { code: `VC-${trip.id}`, unit: unitId, negative,
+    amount: negative ? afterDiscount : Math.round(afterDiscount / 2), ...(recipient ? { recipient: { ...recipient, active: true } } : {}) } : undefined
   const payable = afterDiscount - (voucher?.amount ?? 0)
   const amount = payable <= 0 || isSupplement ? 0 : trip.paid === 0 && !trip.voucher ? 0 : payable + (index % 401 === 0 ? 5000 : 0)
   const method = methods[index % 10 < 6 ? 1 : index % 10 < 8 ? 0 : index % 10 === 8 ? 2 : index % 2 ? 3 : 4]
@@ -275,8 +291,9 @@ export function buildLedger(trips: Trip[], settings: ParkingSettings, state: Rev
   for (const trip of changes.values()) if (!existing.has(trip.id)) currentTrips.push(trip)
   const charges: Charge[] = currentTrips.flatMap((trip) => {
     const charge = chargeForTrip(trip)
-    return charge ? [charge] : []
+    return charge ? [applyVoucherApplications(charge, state.voucherWorkspace?.applications ?? [])] : []
   })
+  charges.push(...(state.demoCharges ?? []).map((charge) => applyVoucherApplications(charge, state.voucherWorkspace?.applications ?? [])))
   for (const batch of state.papers) if (!batch.canceled) batch.rows.forEach((row, i) => {
     const at = dayStart(row.day) + 720
     charges.push({ id: `${batch.id}-${i + 1}`, site: row.site, vehicle: row.vehicle, at, day: row.day,
@@ -381,13 +398,13 @@ export function subscriptionRevenue(month: string, filter: RevenueFilter, access
   if (!/^2026-(09|10|11|12)$/.test(month)) return []
   const sites = allowedSites(access)
   return estates.flatMap((estate, estateIndex) => {
-    if ((filter.estate && filter.estate !== estate.id) || !sites.some((site) => site.estate === estate.id)) return []
+    if (!revenueMatches(estate.id, filter.estate) || !sites.some((site) => site.estate === estate.id)) return []
     return Array.from({ length: 46 + estateIndex * 7 }, (_, i) => {
       const locations = i % 3 === 0 ? [`${estate.id}:0`, `${estate.id}:1`] : [`${estate.id}:${i % 3}`]
       return { id: `HD-${estate.id}-${1000 + i}`, estate: estate.id, sites: locations, vehicle: i % 4 ? "Ô tô" : "Xe máy",
         group: subscriptionGroups[i % subscriptionGroups.length], month, gross: 440000 + i % 5 * 220000, paid: i % 9 !== 0,
         customer: `Thuê bao ${estate.short} ${i + 1}` }
-    }).filter((row) => (!filter.site || row.sites.includes(filter.site)) && (!filter.vehicle || filter.vehicle === row.vehicle))
+    }).filter((row) => revenueIntersects(row.sites, filter.site) && revenueMatches(row.vehicle, filter.vehicle))
   })
 }
 export type SubscriptionRevenue = ReturnType<typeof subscriptionRevenue>[number]

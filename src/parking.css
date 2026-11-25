@@ -100,6 +100,9 @@
 .parking-util-series .parking-link { font-size: 10px; white-space: nowrap; }
 .parking-util-tracks small, .parking-util-tracks b { color: #555f70; font-size: 10px; white-space: nowrap; font-weight: 550; }
 .parking-plot-scroll { overflow-x: auto; }
+.parking-column-empty { align-self: center; margin: auto; color: #8a94a3; font-size: 18px; }
+.parking-holiday-period { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 5px 12px; margin: 10px 0; color: #697483; font-size: 10px; }
+.parking-holiday-period .button { min-height: 25px; padding: 2px 0; font-size: 10px; }
 .parking-plot { display: grid; grid-template-columns: 38px minmax(0, 1fr); margin: 7px 0 0; font-size: 10px; }
 .parking-axis { display: flex; flex-direction: column; justify-content: space-between; height: 158px; color: #768195; text-align: right; padding-right: 8px; }
 .parking-plot-content { position: relative; }

@@ -1,10 +1,25 @@
 import { dayAt, dayStart, isDay, siteById, vnNow } from "./parking-model"
 import type { ParkingSettings, Trip } from "./parking-model"
 import { parkingFeeQuoteError } from "./parking-fees"
-import { auditRevenue, buildLedger, methods, recordChange } from "./revenue-model"
+import { auditRevenue, buildLedger, methods, recordChange, revenueVoucherWorkspace } from "./revenue-model"
 import type { Charge, LedgerRow, RevenueState } from "./revenue-model"
+import { recordVoucherApplication } from "./revenue-vouchers"
+import type { VoucherApplication } from "./revenue-vouchers"
 
 export type RevenueSave = (change: (latest: RevenueState) => RevenueState) => boolean
+
+/** Entry point for finalized lane events; late use creates an adjustment instead of rewriting a closed shift. */
+export function acceptRevenueVoucherApplication(state: RevenueState, input: Omit<VoucherApplication, "recipient" | "purpose" | "sourceName" | "benefit">,
+  trips: Trip[], parking: ParkingSettings, actor: string, adjustmentAllowed: boolean) {
+  const trip = state.tripUpdates.find((row) => row.trip.id === input.tripId)?.trip ?? trips.find((row) => row.id === input.tripId)
+  if (!trip || trip.site !== input.site || input.status === "USED" && (trip.exited == null || input.at !== trip.exited)) throw new Error("Lần sử dụng phải khớp lượt xe và thời điểm hoàn tất.")
+  const workspace = revenueVoucherWorkspace(state)
+  const updated = recordVoucherApplication(workspace, input)
+  if (workspace === updated) return state
+  const next = { ...state, voucherWorkspace: updated }
+  const changed = input.status === "USED" ? changeLedger(state, next, trips, parking, [input.tripId], `Voucher ${input.code} hoàn tất sau chốt`, actor, adjustmentAllowed) : next
+  return auditRevenue(changed, actor, "Ghi nhận lần áp dụng voucher", siteById(input.site)?.estate ?? "", `${input.code} · ${input.tripId} · ${input.status}`)
+}
 export function changeLedger(
   previous: RevenueState, next: RevenueState, trips: Trip[], parking: ParkingSettings,
   ids: string[], reason: string, actor: string, adjustmentAllowed: boolean,

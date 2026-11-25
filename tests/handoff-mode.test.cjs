@@ -86,7 +86,7 @@ test("the public scope excludes unpublished revenue screens, including direct de
   assert.equal(result.mode, "revenue")
 })
 
-test("each mode renders only its navigation and behavior remains an explicit pending screen", () => {
+test("each mode has the expected navigation and behavior keeps one report apart from operations", () => {
   const previous = { window: global.window, location: global.location, localStorage: global.localStorage }
   try {
     for (const mode of ["cards", "parking", "revenue", "behavior", "all"]) {
@@ -103,10 +103,17 @@ test("each mode renders only its navigation and behavior remains an explicit pen
       assert.equal(present("Báo cáo quản lý thẻ"), mode === "cards" || mode === "all", mode)
       assert.equal(present("Báo cáo chỗ đỗ"), mode === "parking" || mode === "all", mode)
       assert.equal(present("Báo cáo doanh thu"), mode === "revenue" || mode === "all", mode)
-      assert.equal(present("Tra cứu lượt xe"), ["parking", "all"].includes(mode) || mode === "revenue" && !revenuePending, mode)
+      assert.equal(present("Tra cứu lượt xe"), ["parking", "all", "behavior"].includes(mode) || mode === "revenue" && !revenuePending, mode)
       assert.equal(present("Cấu hình"), mode !== "behavior" && !revenuePending, mode)
       if (revenuePending) assert.equal(present("Tra cứu doanh thu"), false)
-      if (mode === "behavior") assert.ok(html.includes("Chưa có giao diện trong bản bàn giao này"))
+      if (mode === "behavior") {
+        for (const page of ["Báo cáo phân tích hành vi", "Phân tích hành vi khách hàng", "Sự kiện và ngày lễ"])
+          assert.ok(present(page), page)
+        for (const oldItem of ["Lượt đến và lưu trú", "Theo thời gian", "Khách quay lại", "Quản lý sự kiện", "Lịch ngày lễ"])
+          assert.ok(!present(oldItem), oldItem)
+        assert.ok(nav.indexOf("Sự kiện và ngày lễ") < nav.indexOf('aria-label="Báo cáo"'))
+        assert.match(html, /<h1>Báo cáo phân tích hành vi<\/h1>/)
+      }
     }
   } finally {
     for (const [key, value] of Object.entries(previous)) {
@@ -114,4 +121,21 @@ test("each mode renders only its navigation and behavior remains an explicit pen
       else global[key] = value
     }
   }
+})
+
+test("legacy behavior links reopen their detail on the unified report", () => {
+  for (const [old, section] of [["behavior-time", "time"], ["behavior-events", "events"], ["behavior-returning", "returning"]]) {
+    const { params } = initialHandoffLocation(`?mode=behavior&module=${old}&estate=B&start=2026-11-01&end=2026-11-22`)
+    assert.equal(params.get("module"), "behavior-report")
+    assert.equal(params.get("behaviorSection"), section)
+    assert.equal(params.get("estate"), "B")
+    assert.equal(params.get("start"), "2026-11-01")
+  }
+  const { params } = initialHandoffLocation("?mode=behavior&module=behavior-settings&configEvent=SK-06")
+  assert.equal(params.get("module"), "behavior-event-management")
+  assert.equal(params.get("configEvent"), "SK-06")
+  const calendar = initialHandoffLocation("?mode=behavior&module=behavior-settings", "all").params
+  assert.equal(calendar.get("module"), "behavior-event-management")
+  assert.equal(calendar.get("configView"), "Ngày lễ")
+  assert.equal(params.get("configView"), "Sự kiện")
 })

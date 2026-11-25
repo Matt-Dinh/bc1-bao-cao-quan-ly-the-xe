@@ -52,7 +52,7 @@ const { ParkingTripList, ParkingTripDetail, TripLookupFields, readTripLookupPara
 const { tripExport } = load("parking-export")
 const { ParkingFiltersBar } = load("parking-ui")
 
-test("trip lookup renders all seven option filters with the existing card multi-select control", () => {
+test("trip lookup uses the existing card multi-select for operational and behavior filters", () => {
   const filters = { estate: "", site: "", vehicle: "Ô tô", start: "2026-11-18", end: "2026-11-18" }
   const params = new URLSearchParams({ estate: JSON.stringify(['A', 'B']), vehicle: JSON.stringify(['Ô tô', 'Xe máy']),
     group: JSON.stringify(['Vãng lai', 'VIP']), lane: JSON.stringify(['Làn vào 1', 'Làn ra 1']) })
@@ -60,8 +60,8 @@ test("trip lookup renders all seven option filters with the existing card multi-
     filters, cutoff: filters.end, access: parking.demoAccess, error: '', change() {},
     lookup: { params, error() { return '' }, fields: (params, update) => React.createElement(TripLookupFields, { params, update, data: null }) },
   }))
-  assert.equal((html.match(/aria-haspopup="dialog"/g) || []).length, 7)
-  for (const label of ['Khu đô thị', 'Bãi xe', 'Phương tiện', 'Trạng thái lượt xe', 'Nhóm khách hàng', 'Làn xe', 'Cảnh báo'])
+  assert.equal((html.match(/aria-haspopup="dialog"/g) || []).length, 10)
+  for (const label of ['Khu đô thị', 'Bãi xe', 'Phương tiện', 'Trạng thái lượt xe', 'Loại khách', 'Làn xe', 'Loại ngày', 'Cảnh báo', 'Sự kiện', 'Nhóm thời gian lưu trú'])
     assert.ok(html.includes(`aria-label="${label}" aria-haspopup="dialog"`), label)
   for (const label of ['Ô tô', 'Xe máy', 'Vãng lai', 'VIP', 'Làn vào 1', 'Làn ra 1'])
     assert.ok(html.includes(`class="lookup-status-tag">${label}`), label)
@@ -69,6 +69,28 @@ test("trip lookup renders all seven option filters with the existing card multi-
   const read = readTripLookupParams(new URLSearchParams('estate=A&estate=B&group=VIP'))
   assert.deepEqual(JSON.parse(read.get('estate')), ['A', 'B'])
   assert.equal(read.get('group'), 'VIP')
+})
+
+test("occupancy day-type links preselect the visible filter and show the corresponding trips", () => {
+  const filters = { estate: "A", site: "A:0", vehicle: "Ô tô", start: "2026-11-20", end: "2026-11-23" }
+  const settings = { ...readSettings(), holidays: [{ id: 'HOLIDAY', effective: '2026-11-22', name: 'Ngày lễ thử', canceled: false }] }
+  const original = seedTrips("2026-11-25").find((trip) => trip.site === 'A:0' && trip.vehicle === 'Ô tô')
+  const trips = ['20', '21', '22', '23'].map((day) => ({ ...original, id: `DAY-${day}`, plate: `DAY-${day}`,
+    entered: parking.dayStart(`2026-11-${day}`) + 9 * 60, exited: parking.dayStart(`2026-11-${day}`) + 10 * 60 }))
+  const data = parking.buildParkingReport(trips, settings, filters, parking.demoAccess)
+  const expected = { 'Ngày thường': ['DAY-20', 'DAY-23'], 'Cuối tuần': ['DAY-21'], 'Lễ tết': ['DAY-22'] }
+  for (const kind of parking.dayTypes) {
+    const patch = parking.tripLookupPatch({ metric: 'parked', label: kind, dayKind: kind,
+      start: parking.dayStart(filters.start), end: parking.dayStart(filters.end) + parking.dayMinutes }, filters, settings)
+    const params = readTripLookupParams(new URLSearchParams(Object.entries(patch).filter(([, value]) => value != null)))
+    const fields = renderToStaticMarkup(React.createElement(TripLookupFields, { params, update() {}, data }))
+    assert.ok(fields.includes('aria-label="Loại ngày" aria-haspopup="dialog"'))
+    assert.ok(fields.includes(`class="lookup-status-tag">${kind}`), kind)
+    const html = renderToStaticMarkup(React.createElement(ParkingTripList, {
+      data, settings, filters, params, update() {}, access: parking.demoAccess, exportFile() {}, changes: [], openTrip() {}, headingActions: null,
+    }))
+    for (const trip of trips) assert.equal(html.includes(trip.plate), expected[kind].includes(trip.id), `${kind}/${trip.id}`)
+  }
 })
 
 test("lookup shows the recorded exit after the reporting cutoff without changing historical status or totals", () => {

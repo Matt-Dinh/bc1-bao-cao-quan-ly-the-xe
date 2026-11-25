@@ -1,4 +1,5 @@
 import { estates, normalize } from "./data"
+import { tripLookupValues } from "./parking-filter-values"
 
 export const parkingVehicles = [
   "Ô tô",
@@ -272,7 +273,6 @@ export interface Schedule extends Version {
 export interface Threshold extends Version {
   estate: string
   hours: number
-  approval: string
   note: string
 }
 export interface Holiday extends Version {
@@ -293,6 +293,15 @@ export interface Audit {
   kind?: DeclarationKind
 }
 export interface ParkingSettings {
+  behaviorDemoVersion?: 1
+  behaviorEvents?: import("./behavior-model").BehaviorEvent[]
+  behaviorSnapshot?: {
+    refreshDay: string
+    days: string[]
+    affected: Record<string, string[]>
+    events: import("./behavior-model").BehaviorEvent[]
+    holidays: Holiday[]
+  }
   capacities: Capacity[]
   plans: Plan[]
   schedules: Schedule[]
@@ -1017,14 +1026,14 @@ export function tripLookupDrill(params: URLSearchParams, filters: ParkingFilters
   const mode = tripLookupMode(params)
   if (!mode) return null
   const { start, end } = tripLookupWindow(params, filters)
-  const dayKind = dayTypes.find((label) => label === params.get("dayKind"))
+  const kinds = tripLookupValues(params, "dayKind")
   const selectedBucket = Number(params.get("durationGroup"))
   const bucket = Number.isInteger(selectedBucket) && selectedBucket >= 1 && selectedBucket <= durationGroups.length
     ? selectedBucket : undefined
   const metric = mode === "outgoing" && bucket !== undefined ? "duration" : mode
   return {
     metric, label: tripLookupModes[metric], start, end,
-    days: dayKind ? data.daily.filter((row) => row.type === dayKind).map((row) => row.day) : undefined,
+    days: kinds.length ? data.daily.filter((row) => kinds.includes(row.type)).map((row) => row.day) : undefined,
     bucket: metric === "duration" ? bucket : undefined,
   }
 }

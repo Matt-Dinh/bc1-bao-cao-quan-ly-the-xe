@@ -89,7 +89,10 @@ import type {
 } from "./parking-ui"
 import { adjustmentExport, tripExport } from "./parking-export"
 import CardLookupMultiFilter from "./CardLookupMultiFilter"
-import { tripLookupOptionKeys, tripLookupScopeKeys, tripLookupValue, tripLookupValues, tripMatchesLookup, tripMatchesScope, tripLookupScope } from "./parking-lookup"
+import { prepareTripDayFilter, tripLookupOptionKeys, tripLookupScopeKeys, tripLookupValue, tripLookupValues, tripMatchesLookup, tripMatchesScope, tripLookupScope } from "./parking-lookup"
+import { behaviorLookupKeys, clearBehaviorLookup, lookupBandOptions, lookupCutoff, lookupEventOptions, prepareBehaviorLookup } from "./behavior-lookup"
+import { behaviorGuests, dwellMinutes, fineBandIndex, hourLabel, tripEvents, tripGuest, tripVehicle } from "./behavior-model"
+import type { BehaviorEvent, EventIndex } from "./behavior-model"
 
 export const tripLabel = (trip: Trip) => trip.plate || trip.id
 const money = (value: number | null) =>
@@ -111,7 +114,7 @@ const baseColumns = [
   "Bãi xe",
   "Loại xe",
   "Mã thẻ / vé",
-  "Nhóm khách",
+  "Loại khách",
   "Vào",
   "Ra",
   "Thời gian đỗ",
@@ -119,6 +122,9 @@ const baseColumns = [
   "Cảnh báo",
 ]
 const extraColumns = [
+  "Nhóm khách",
+  "Sự kiện",
+  "Nhóm thời gian lưu trú",
   "Khu đô thị",
   "Làn vào",
   "Làn ra",
@@ -143,7 +149,7 @@ const columnsKey = "vparking:parking:trip-columns"
 const tripColumnNames = Object.fromEntries([...baseColumns, ...extraColumns].map((label) => [label, label]))
 export function readTripLookupParams(params: URLSearchParams) {
   const values = new URLSearchParams()
-  for (const key of ["q", ...tripLookupScopeKeys, ...advancedKeys, ...tripLookupKeys]) {
+  for (const key of ["q", ...tripLookupScopeKeys, ...advancedKeys, ...tripLookupKeys, ...behaviorLookupKeys]) {
     for (const value of params.getAll(key)) if (value) values.append(key, value)
   }
   for (const key of tripLookupOptionKeys) {
@@ -184,7 +190,8 @@ export function parseDrill(param: string | null): TripDrill | null {
     return null
   }
 }
-export function TripLookupFields({ params, update, data }: { params: URLSearchParams; update: UpdateParams; data: ParkingReportData | null }) {
+export function TripLookupFields({ params, update, data, events = [] }: { params: URLSearchParams; update: UpdateParams;
+  data: ParkingReportData | null; events?: BehaviorEvent[] }) {
   const mode = tripLookupMode(params)
   const metric = params.get("reportMetric") || mode
   const contextLabels: Record<string, string> = {
@@ -201,17 +208,23 @@ export function TripLookupFields({ params, update, data }: { params: URLSearchPa
     deficit: "Xe ra chưa thu đủ phí",
     exceeded: "Xe có mặt khi bãi vượt sức chứa",
   }
-  const context = (metric && contextLabels[metric]) || (params.get("night") === "1" ? "Xe có qua đêm" : "")
+  const behaviorContext = params.get("bContext")
+  const context = behaviorContext || (metric && contextLabels[metric]) || (params.get("night") === "1" ? "Xe có qua đêm" : "")
   const bucket = Number(params.get("durationGroup"))
   const details = [
-    ...(hasLookupHours(mode) ? [
+    ...(!behaviorContext && hasLookupHours(mode) ? [
       mode !== "closing" ? `Từ ${params.get("hourStart") || "00:00"} ngày đầu kỳ` : "",
       mode !== "opening" ? (params.get("hourEnd") ? `Đến ${params.get("hourEnd")} ngày cuối kỳ` : "Đến hết ngày cuối kỳ") : "",
     ] : []),
-    dayTypes.find((day) => day === params.get("dayKind")) || "",
+    ...tripLookupValues(params, "dayKind").filter((kind) => dayTypes.some((day) => day === kind)),
     Number.isInteger(bucket) && bucket >= 1 && bucket <= durationGroups.length && (mode === "outgoing" || mode === "duration")
       ? durationGroups[bucket - 1] : "",
     mode === "nightly" ? "Mỗi dòng là một xe trong một đêm; một xe có thể có nhiều dòng." : "",
+    params.has("bExact") ? `Lưu trú ${params.get("bExact")} phút` : "",
+    params.has("bHour") ? `Giờ vào ${hourLabel(Number(params.get("bHour")))}` : "",
+    params.has("bExitHour") ? `Giờ ra ${hourLabel(Number(params.get("bExitHour")))}` : "",
+    params.has("bDays") ? `${params.get("bDays")!.split(",").length} ngày được đối chiếu` : "",
+    params.has("bPlate") ? `Biển số ${params.get("bPlate")}` : "",
   ].filter(Boolean)
   const lanes = [...new Set([
     "Làn vào 1", "Làn vào 2", "Làn ra 1", "Làn ra 2", ...tripLookupValues(params, "lane"),
@@ -229,8 +242,9 @@ export function TripLookupFields({ params, update, data }: { params: URLSearchPa
           { value: "Đang trong bãi", label: "Đang trong bãi tại mốc tra cứu" },
           { value: "Đã ra", label: "Đã ra tại mốc tra cứu" },
         ]],
-        ["group", "Nhóm khách hàng", "Tất cả nhóm khách hàng", [...parkingGroups]],
+        ["group", "Loại khách", "Tất cả loại khách", [...behaviorGuests]],
         ["lane", "Làn xe", "Tất cả làn", lanes],
+        ["dayKind", "Loại ngày", "Tất cả loại ngày", [...dayTypes]],
         ["alert", "Cảnh báo", "Tất cả cảnh báo", [...tripAlertOptions,
           ...(tripLookupValues(params, "alert").includes(overCapacityTripAlert.value) ? [{ value: overCapacityTripAlert.value, label: tripAlertLabel(overCapacityTripAlert.value) }] : [])]],
       ] as const).map(([key, label, all, options]) => (
@@ -241,13 +255,19 @@ export function TripLookupFields({ params, update, data }: { params: URLSearchPa
             ? "Chưa ghi nhận giờ ra: lượt đã vào và hiện chưa có giờ ra. Nếu chọn thêm trạng thái, kết quả gồm cả các trạng thái đã chọn."
             : key === "alert" ? "Khớp ít nhất một cảnh báo đã chọn. Bỏ chọn hết để không giới hạn cảnh báo." : undefined} />
       ))}
+      {([
+        ["bEvent", "Sự kiện", "Tất cả sự kiện", lookupEventOptions(events)],
+        ["bDuration", "Nhóm thời gian lưu trú", "Tất cả nhóm lưu trú", lookupBandOptions],
+      ] as const).map(([key, label, allLabel, options]) => <CardLookupMultiFilter key={key} label={label} allLabel={allLabel}
+        value={params.get(key)?.split(",") ?? []} options={options}
+        onChange={(values) => update({ [key]: values.join(",") || null })} />)}
     </div>
     {context || params.get("adjustment") === "1" ? <div className="parking-lookup-context" role="status">
       <div>
         <strong>Đang xem: {params.get("adjustment") === "1" ? "Bản cập nhật sau khi chốt số liệu" : context}</strong>
         {!!details.length && <p>{details.join(" · ")}</p>}
       </div>
-      <Button variant="link" onClick={() => update({ ...clearTripLookup, night: null, adjustment: null,
+      <Button variant="link" onClick={() => update({ ...clearTripLookup, ...clearBehaviorLookup, night: null, adjustment: null,
         ...(params.has("reportMetric") ? { state: null, alert: null, group: null } : {}),
       })}>Bỏ điều kiện đối chiếu</Button>
     </div> : <p className="lookup-time-hint">Tra cứu các xe có mặt trong bãi trong khoảng thời gian đã chọn, kể cả xe vào từ trước.</p>}
@@ -276,23 +296,37 @@ export function ParkingTripList({
   openTrip,
   revenueActions,
   headingActions,
-}: TripProps & { revenueActions?: ReactNode; headingActions: HTMLDivElement | null }) {
+  behaviorEvents = new Map(),
+  behaviorCutoff = Infinity,
+  behaviorTrips,
+}: TripProps & { revenueActions?: ReactNode; headingActions: HTMLDivElement | null; behaviorEvents?: EventIndex;
+  behaviorCutoff?: number; behaviorTrips?: Trip[] }) {
   const [showColumns, setShowColumns] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const defaultColumns = [...baseColumns]
   if (new Set(data.bySite.map((site) => site.estate)).size > 1)
     defaultColumns.splice(1, 0, "Khu đô thị")
+  const showBehavior = params.has("bContext") || params.has("bEvent") || params.has("bDuration")
+  const behaviorColumns = ["Loại khách", "Sự kiện", "Nhóm thời gian lưu trú"]
   const actor = `${access.role}/${access.estate}`
   const [savedColumns, setSavedColumns] = useState(() => readColumns(actor))
-  const shownColumns = savedColumns ?? defaultColumns
+  const shownColumns = showBehavior ? [...new Set([...(savedColumns ?? defaultColumns), ...behaviorColumns])] : savedColumns ?? defaultColumns
   useEffect(() => setSavedColumns(readColumns(actor)), [actor])
   const drill = tripLookupDrill(params, filters, data)
   const lookupWindow = tripLookupWindow(params, filters)
   const q = params.get("q")?.slice(0, 100) ?? ""
-  const end = drill?.metric === "opening" ? drill.start : lookupWindow.end
+  const behaviorEnd = lookupCutoff(params, behaviorCutoff)
+  const end = behaviorTrips ? behaviorEnd : drill?.metric === "opening" ? drill.start : lookupWindow.end
+  const behaviorMatches = prepareBehaviorLookup(params, behaviorEnd, behaviorEvents)
+  const durationLabel = (trip: Trip) => {
+    const bucket = fineBandIndex(dwellMinutes(trip, behaviorEnd))
+    return bucket < 0 ? "" : lookupBandOptions[bucket + 1].label
+  }
+  const eventCodes = (trip: Trip) => tripEvents(trip, behaviorEvents).join(", ")
   const adjustmentOnly = params.get("adjustment") === "1"
   const now = vnNow()
   const exceededHours = useMemo(() => exceededHoursBySite(data.total.exceeded), [data.total.exceeded])
+  const matchesDay = prepareTripDayFilter(params, filters, settings)
   const alertLabels = (trip: Trip) => {
     const labels = tripAlerts(trip, filters, settings)
     if (parkedDuringExceededHour(trip, exceededHours)) labels.push(overCapacityTripAlert.label)
@@ -301,6 +335,8 @@ export function ParkingTripList({
   const matches = (trip: Trip) =>
     searchTrips(trip, q) &&
     tripMatchesLookup(trip, params, end, filters, settings, exceededHours, now) &&
+    matchesDay(trip) &&
+    behaviorMatches(trip) &&
     (params.get("night") !== "1" || nightsFor(trip, data.days).length > 0)
   const uniqueChanges = [
     ...new Map(changes.map((change) => [change.trip.id, change.trip])).values(),
@@ -308,13 +344,13 @@ export function ParkingTripList({
   const historyChanges = changes.filter(({ trip }) => matches(trip) &&
     (!(params.get("hourStart") || params.get("hourEnd")) || touches(trip, lookupWindow.start, lookupWindow.end)))
   const filteredSites = (trip: Trip) => tripMatchesScope(trip, tripLookupScope(params))
-  const scopedTrips = drill
+  const scopedTrips = behaviorTrips ?? (drill
     ? data.bySite.flatMap((site) => site.trips)
-    : data.periodTrips
+    : data.periodTrips)
   const matchingTrips = (adjustmentOnly ? uniqueChanges.filter(filteredSites) : scopedTrips)
     .filter(matches)
     .filter((trip) => drill || touches(trip, lookupWindow.start, lookupWindow.end))
-  const filtered: TripRow[] = (drill
+  const filtered: TripRow[] = (drill && !behaviorTrips
     ? drillTrips(matchingTrips, drill, settings, data.total.exceeded)
     : matchingTrips.map((trip) => ({ trip }))).map((row) => ({ ...row, afterLock: adjustmentOnly }))
   const sort = params.get("sort") || "new"
@@ -338,9 +374,12 @@ export function ParkingTripList({
     ),
     "Khu đô thị": ({ trip }) => estateLabel(trip),
     "Bãi xe": ({ trip }) => siteById(trip.site)?.name,
-    "Loại xe": ({ trip }) => trip.vehicle,
+    "Loại xe": ({ trip }) => behaviorTrips ? tripVehicle(trip) : trip.vehicle,
     "Mã thẻ / vé": ({ trip }) => trip.ticket,
     "Nhóm khách": ({ trip }) => trip.group,
+    "Loại khách": ({ trip }) => tripGuest(trip),
+    "Sự kiện": ({ trip }) => eventCodes(trip) || "—",
+    "Nhóm thời gian lưu trú": ({ trip }) => durationLabel(trip) || "—",
     Vào: ({ trip }) => displayTime(trip.entered),
     Ra: ({ trip }) => <>
       {displayTime(trip.exited)}
@@ -371,7 +410,7 @@ export function ParkingTripList({
     "Số điện thoại": ({ trip }) => trip.phone,
   }
   const reset = () =>
-    update({ ...clearAdvanced, ...clearTripLookup, estate: null, site: null, q: null, drill: null, page: null })
+    update({ ...clearAdvanced, ...clearTripLookup, ...clearBehaviorLookup, estate: null, site: null, q: null, drill: null, page: null })
   const exportRows = () =>
     exportFile(
       "TraCuuLuotXe",
@@ -379,6 +418,9 @@ export function ParkingTripList({
         "Lượt xe": filtered.map(({ trip, night, afterLock }) => ({
           ...tripExport(trip, filters, settings, data.days, night, end, true),
           "Cảnh báo": alertLabels(trip).join(", "),
+          "Loại khách": tripGuest(trip),
+          "Sự kiện": eventCodes(trip),
+          "Nhóm thời gian lưu trú": durationLabel(trip),
           "Sau khóa": afterLock ? "Có" : "",
         })),
         ...(changes.length
@@ -408,7 +450,7 @@ export function ParkingTripList({
           </div>
           <div className="parking-inline">
             <Button aria-pressed={drill?.metric === "nightly"} onClick={() => update({
-              ...clearTripLookup, tripMode: drill?.metric === "nightly" ? null : "nightly",
+              ...clearTripLookup, ...clearBehaviorLookup, tripMode: drill?.metric === "nightly" ? null : "nightly",
               night: null, adjustment: null, page: null,
             })}><Moon size={15} /> Lượt qua đêm</Button>
             <Button onClick={() => setShowHistory(true)}>

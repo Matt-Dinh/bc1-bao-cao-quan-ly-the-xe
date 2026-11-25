@@ -1,9 +1,11 @@
+import { behaviorReport, behaviorTitle, isBehaviorScreen, migrateBehaviorLocation } from "./behavior-routes"
+
 export const handoffModes = [
   { id: "all", label: "Tất cả màn hình", title: "Tất cả màn hình" },
   { id: "cards", label: "Quản lý thẻ", title: "Báo cáo quản lý thẻ" },
   { id: "parking", label: "Chỗ đỗ", title: "Báo cáo chỗ đỗ" },
   { id: "revenue", label: "Doanh thu", title: "Báo cáo doanh thu" },
-  { id: "behavior", label: "Hành vi khách hàng", title: "Báo cáo phân tích hành vi khách hàng" },
+  { id: "behavior", label: "Hành vi gửi xe", title: behaviorTitle },
 ] as const
 export type HandoffMode = typeof handoffModes[number]["id"]
 export const handoffModeStorageKey = "vparking:handoff-mode"
@@ -27,19 +29,19 @@ export function modeAllowsScreen(mode: HandoffMode, screen: string, revenueAvail
   if (!revenueAvailable && mode === "revenue") return screen === "revenue-report"
   if (!revenueAvailable && screen.startsWith("revenue-")) return mode === "all" && screen === "revenue-report"
   if (mode === "all") return cardScreens.has(screen) || parkingScreens.has(screen) ||
-    revenueScreens.has(screen) || screen === "behavior-report"
+    revenueScreens.has(screen) || isBehaviorScreen(screen)
   if (mode === "cards") return cardScreens.has(screen)
   if (mode === "parking") return parkingScreens.has(screen)
   if (mode === "revenue") return revenueScreens.has(screen)
-  return screen === "behavior-report"
+  return isBehaviorScreen(screen) || screen === "parking-trips"
 }
 export const modeHome = (mode: HandoffMode) =>
   mode === "parking" ? "parking-report" : mode === "revenue" ? "revenue-report" :
-    mode === "behavior" ? "behavior-report" : "stock"
+    mode === "behavior" ? behaviorReport : "stock"
 
 /** A shared URL wins over a saved preference; old deep links retain their filters. */
 export function initialHandoffLocation(search: string, saved?: string | null, revenueAvailable = true) {
-  let params = new URLSearchParams(search)
+  let params = migrateBehaviorLocation(new URLSearchParams(search))
   const requested = params.get("mode")
   const route = params.get("module") || params.get("screen") || "stock"
   const explicitRoute = params.has("module") || params.has("screen")

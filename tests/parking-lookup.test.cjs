@@ -59,6 +59,87 @@ test("only the three supported vehicle types appear in configuration and sample 
   assert.ok(seedTrips("2026-11-19").every((row) => parking.parkingVehicles.includes(row.vehicle)))
 })
 
+test("behavior counts overlapping events once and applies the same dwell rules in BC2 drill-down", () => {
+  const behavior = model("behavior-model")
+  const behaviorLookup = model("behavior-lookup")
+  const eventDay = "2026-09-19"
+  const selected = { start: eventDay, end: eventDay, estates: ["A"], sites: ["A:0"], vehicles: [], guests: ["Vãng lai"], type: "" }
+  const events = behaviorLookup.behaviorEvents(settings)
+  const entry = at(eventDay, 18)
+  const rows = [
+    trip("30A-123.45", entry, entry + 15 - 1 / 60),
+    trip("30A12345", entry + 15, entry + 135),
+    { ...trip("supplemented", entry + 30, entry + 150), sourceOut: "ANBV bổ sung" },
+    trip("exclusive-end", at(eventDay, 20), null),
+  ]
+  const data = behavior.buildBehaviorData(rows, events, settings.holidays, selected, behavior.behaviorScope(selected, parking.demoAccess).sites, eventDay)
+  assert.deepEqual(data.arrivals.map(({ events }) => events), Array(3).fill(["SK-03", "SK-04"]).concat([["SK-03"]]))
+  assert.equal(behavior.arrivalStats(data.arrivals).n, 2)
+  assert.equal(behavior.arrivalStats(data.arrivals).median, 67)
+  assert.equal(behavior.returningVehicles(data).find(({ plate }) => plate === "30A12345").rows.length, 2)
+  const reportBand = data.arrivals.filter(({ dwell }) => behavior.inBand(dwell, behavior.dwellBands.fine[0]))
+  const params = new URLSearchParams({ bEvent: "SK-03,SK-04", bFrom: "0", bTo: "15" })
+  const drill = behaviorLookup.prepareBehaviorLookup(params, at("2026-09-20", 0), behavior.indexEvents(events))
+  assert.deepEqual(rows.filter(drill).map(({ id }) => id), reportBand.map(({ trip }) => trip.id))
+})
+
+test("behavior demo populates calendar types, event comparisons and every returning cohort from shared trips", () => {
+  const behavior = model("behavior-model")
+  const demo = model("behavior-demo")
+  const today = "2026-11-25"
+  const demoSettings = demo.withBehaviorDemoSettings({
+    ...settings, behaviorDemoVersion: undefined, behaviorEvents: undefined, holidays: [], history: [],
+  }, today)
+  const selected = { start: "2026-11-01", end: "2026-11-23", estates: [], sites: [], vehicles: [], guests: ["Vãng lai"], type: "" }
+  const rows = seedTrips(today)
+  const data = behavior.buildBehaviorData(rows, demoSettings.behaviorEvents, demoSettings.holidays, selected,
+    behavior.behaviorScope(selected, parking.demoAccess).sites, selected.end)
+  assert.deepEqual(new Set(data.days.map(({ kind }) => kind)), new Set(behavior.dayKinds))
+  const vehicles = behavior.returningVehicles(data)
+  for (const [min, max] of behavior.repeatBands)
+    assert.ok(vehicles.some(({ rows }) => rows.length >= min && rows.length < max), `Visits ${min}–${max}`)
+  assert.ok(vehicles.some(({ familiar }) => familiar))
+  assert.ok(vehicles.some(({ familiar }) => !familiar))
+  const events = behavior.summarizeEvents(data, demoSettings.behaviorEvents)
+  assert.ok(events.some(({ gain }) => gain > 0))
+  assert.ok(events.some(({ gain }) => gain < 0))
+  assert.ok(events.some(({ windows }) => windows.length > 1 && windows.every((slot) => slot.rows.length > 0)))
+  assert.ok(events.some(({ event }) => event.notes.length > 1))
+  const eventStates = demoSettings.behaviorEvents.filter((event) => !event.deleted)
+    .map((event) => behavior.eventState(event, at(today, 12)))
+  assert.deepEqual(new Set(eventStates), new Set(["Đã diễn ra", "Đang diễn ra", "Sắp diễn ra"]))
+  assert.ok(demoSettings.history.some(({ kind }) => kind === "holidays"))
+
+  const previous = demoSettings.behaviorEvents.find(({ id }) => id === "SK-06")
+  const custom = { ...previous, name: "Sự kiện tôi đã sửa", deleted: true }
+  const migrated = demo.withBehaviorDemoSettings({ ...demoSettings, behaviorDemoVersion: undefined, behaviorEvents: [custom] }, today)
+  assert.equal(migrated.behaviorEvents.find(({ id }) => id === custom.id), custom)
+  assert.equal(demo.withBehaviorDemoSettings(migrated, "2026-11-26"), migrated)
+})
+
+test("legacy event offsets migrate into explicit windows once, including midnight and overlap", () => {
+  const behavior = model("behavior-model")
+  const demo = model("behavior-demo")
+  const original = demo.demoBehaviorEvents("2026-11-25")[0]
+  const legacy = { ...original, early: 30, windows: [
+    { day: "2026-11-18", start: "00:15", end: "02:00", overnight: false },
+    { day: "2026-11-18", start: "02:10", end: "03:00", overnight: false },
+  ], history: [], notes: [{ text: "Chú thích đang có", actor: "BQL", at: "2026-11-19T09:00:00Z" }] }
+  const converted = behavior.migrateBehaviorEvent(legacy)
+  assert.equal(Object.hasOwn(converted, "early"), false)
+  assert.deepEqual(converted.windows, [
+    { day: "2026-11-17", start: "23:45", end: "03:00", overnight: true },
+  ])
+  assert.deepEqual(converted.notes, legacy.notes)
+  assert.equal(behavior.migrateBehaviorEvent(converted), converted)
+  const saved = { ...settings, behaviorDemoVersion: 1, behaviorEvents: [legacy],
+    behaviorSnapshot: { refreshDay: "2026-11-25", days: [], affected: {}, events: [legacy], holidays: [] } }
+  const updated = demo.withBehaviorDemoSettings(saved, "2026-11-25")
+  assert.deepEqual(updated.behaviorEvents[0].windows, converted.windows)
+  assert.deepEqual(updated.behaviorSnapshot.events[0].windows, converted.windows)
+  assert.equal(demo.withBehaviorDemoSettings(updated), updated)
+})
+
 test("trip multi selections retain legacy links, repeated params, special characters and reloads", () => {
   for (const values of [[], ["Ô tô"], ["Ô tô", "Xe máy"], ["x,y", "a+b", "a:b"]]) {
     const encoded = lookup.tripLookupValue(values)
@@ -380,6 +461,28 @@ test("day-type report links preserve the selected calendar days", () => {
   const kind = parking.dayType("2026-11-01", settings.holidays)
   const { rows } = fromReport("incoming", { dayKind: kind })
   assert.deepEqual(rows.map((row) => row.trip.id), ["first-day"])
+})
+
+test("day-type multi-select uses the current holiday calendar for report links and ordinary lookup", () => {
+  const filters = { estate: 'A', site: 'A:0', vehicle: 'Ô tô', start: '2026-11-20', end: '2026-11-23' }
+  const holiday = { id: 'HOLIDAY', effective: '2026-11-22', name: 'Ngày lễ thử', canceled: false }
+  const calendar = { ...settings, holidays: [holiday] }
+  const rows = ['20', '21', '22', '23'].map((day) => trip(`DAY-${day}`, at(`2026-11-${day}`, 9), at(`2026-11-${day}`, 10)))
+  const overnight = trip('OVERNIGHT', at('2026-11-21', 23), at('2026-11-22', 1))
+  const params = new URLSearchParams({ dayKind: lookup.tripLookupValue(['Cuối tuần', 'Lễ tết']) })
+  const matches = lookup.prepareTripDayFilter(params, filters, calendar)
+  assert.deepEqual([...rows, overnight].filter(matches).map((row) => row.id), ['DAY-21', 'DAY-22', 'OVERNIGHT'])
+  params.set('tripMode', 'incoming')
+  const data = parking.buildParkingReport(rows, calendar, filters, parking.demoAccess)
+  const drill = parking.tripLookupDrill(params, filters, data)
+  assert.deepEqual(drill.days, ['2026-11-21', '2026-11-22'])
+  assert.deepEqual(parking.drillTrips(rows, drill, calendar).map(({ trip }) => trip.id), ['DAY-21', 'DAY-22'])
+  params.delete('tripMode'); params.set('dayKind', 'Lễ tết')
+  assert.deepEqual(rows.filter(lookup.prepareTripDayFilter(params, filters, calendar)).map((row) => row.id), ['DAY-22'])
+  const canceled = { ...calendar, holidays: [{ ...holiday, canceled: true }] }
+  assert.equal(rows.filter(lookup.prepareTripDayFilter(params, filters, canceled)).length, 0)
+  params.delete('dayKind')
+  assert.equal(rows.filter(lookup.prepareTripDayFilter(params, filters, canceled)).length, 4)
 })
 
 test("overnight details retain one row per car per night and reconcile with the report", () => {

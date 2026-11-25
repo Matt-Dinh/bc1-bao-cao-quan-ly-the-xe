@@ -63,9 +63,12 @@ import { tripRevenueAmounts } from "./revenue-model"
 import { getParkingFeeService } from "./parking-fees"
 import { createDemoParkingFeeService } from "./parking-fees-demo"
 import { tripLookupScope, tripLookupScopeDenied, tripMatchesScope } from "./parking-lookup"
+import { behaviorReportInputs } from "./behavior-lookup"
+import { canReadBehavior, canSeePlates, indexEvents } from "./behavior-model"
+import { behaviorReport, migrateBehaviorLocation } from "./behavior-routes"
 
 type Navigate = (
-  screen: ParkingScreen,
+  screen: ParkingScreen | import("./behavior-routes").BehaviorScreen,
   patch?: Record<string, string | null>,
   preserve?: boolean,
 ) => void
@@ -80,6 +83,7 @@ interface Props {
   onDirty: (dirty: boolean) => void
   notify: (message: string) => void
   revenue?: RevenueTripActions
+  tripUpdates?: Trip[]
 }
 export default function Parking({
   screen,
@@ -92,15 +96,20 @@ export default function Parking({
   onDirty,
   notify,
   revenue,
+  tripUpdates,
 }: Props) {
   const { trips: baseTrips, settings, cutoff, actor, save } = model
   const trips = useMemo(() => {
     if (!baseTrips) return baseTrips
-    if (!revenue?.state.tripUpdates.length) return baseTrips.map(tripRevenueAmounts)
+    if (!revenue?.state.tripUpdates.length && !tripUpdates?.length) return baseTrips.map(tripRevenueAmounts)
     const byId = new Map(baseTrips.map((trip) => [trip.id, trip]))
-    for (const update of revenue.state.tripUpdates) byId.set(update.trip.id, update.trip)
+    if (revenue) for (const update of revenue.state.tripUpdates) byId.set(update.trip.id, update.trip)
+    else for (const trip of tripUpdates ?? []) byId.set(trip.id, trip)
     return [...byId.values()].map(tripRevenueAmounts)
-  }, [baseTrips, revenue?.state.tripUpdates])
+  }, [baseTrips, revenue?.state.tripUpdates, tripUpdates])
+  const lookupEvents = useMemo(() => screen === "parking-trips" ? behaviorReportInputs(settings, cutoff).events : [],
+    [screen, settings.behaviorEvents, settings.behaviorSnapshot, cutoff])
+  const eventIndex = useMemo(() => indexEvents(lookupEvents), [lookupEvents])
   const pendingTrips: Trip[] = revenue && baseTrips ? orphanTransactions.filter((row) =>
     (!access.estate || row.estate === access.estate) && !revenue.state.tripUpdates.some((update) => update.trip.id === row.trip))
     .map((row) => ({
@@ -152,6 +161,7 @@ export default function Parking({
     : undefined
   const denied =
     !canOpen(access, screen) ||
+    (screen === "parking-trips" && (params.has("bContext") && !canReadBehavior(access) || params.has("bPlate") && !canSeePlates(access))) ||
     (lookupScope ? tripLookupScopeDenied(lookupScope, access) : (!!filters.estate &&
       !scope.some((site) => site.estate === filters.estate)) ||
     (!!filters.site &&
@@ -162,7 +172,11 @@ export default function Parking({
       ))) ||
     (!!trip && !scope.some((site) => site.id === trip.site)) ||
     (!!params.get("configEstate") &&
-      !scope.some((site) => site.estate === params.get("configEstate")))
+      params
+        .get("configEstate")!
+        .split("|")
+        .filter(Boolean)
+        .some((estateId) => !scope.some((site) => site.estate === estateId)))
   const dateError = periodError(filters, cutoff)
   const lookupError = screen === "parking-trips" && !dateError ? tripLookupFilterError(params, filters) : ""
   const error = dateError || lookupError
@@ -399,8 +413,19 @@ export default function Parking({
   }
   const backToOrigin = () => {
     const origin = new URLSearchParams(params.get("origin") ?? "")
+    const originScreen = params.get("originScreen")
+    if (originScreen) {
+      const report = new URLSearchParams(origin)
+      report.set("module", originScreen)
+      migrateBehaviorLocation(report)
+      if (report.get("module") === behaviorReport) {
+        report.delete("module")
+        navigate(behaviorReport, Object.fromEntries(report))
+        return
+      }
+    }
     navigate(
-      params.get("originScreen") === "parking-alerts"
+      originScreen === "parking-alerts"
         ? "parking-alerts"
         : "parking-report",
       Object.fromEntries(origin),
@@ -482,7 +507,8 @@ export default function Parking({
         } : changeFilters}
         lookup={screen === "parking-trips" ? {
           params: readTripLookupParams(params),
-          fields: (draftParams, updateDraft) => <TripLookupFields params={draftParams} update={updateDraft} data={data} />,
+          fields: (draftParams, updateDraft) => <TripLookupFields params={draftParams} update={updateDraft} data={data}
+            events={lookupEvents.filter((event) => scope.some((site) => site.estate === event.estate))} />,
           error: tripLookupFilterError,
         } : undefined}
         report={screen === "parking-report"}
@@ -555,6 +581,10 @@ export default function Parking({
               changes={changes}
               openTrip={openTrip}
               headingActions={tripHeadingActions}
+              behaviorEvents={eventIndex}
+              behaviorCutoff={dayStart(shiftDay(cutoff, 1))}
+              behaviorTrips={params.has("bContext") ? trips?.filter((trip) =>
+                scope.some((site) => site.id === trip.site) && inWindow(trip.entered, dayStart(filters.start), dayStart(shiftDay(filters.end, 1)))) : undefined}
               revenueActions={revenue && <RevenueTripEditor pendingTrips={pendingTrips} {...revenue} feeService={parkingFeeService}
                 trips={baseTrips ?? []} settings={settings} actor={actor} access={access} notify={notify} />}
             />
