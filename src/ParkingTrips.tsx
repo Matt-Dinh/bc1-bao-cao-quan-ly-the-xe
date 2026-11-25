@@ -91,7 +91,7 @@ import { adjustmentExport, tripExport } from "./parking-export"
 import CardLookupMultiFilter from "./CardLookupMultiFilter"
 import { prepareTripDayFilter, tripLookupOptionKeys, tripLookupScopeKeys, tripLookupValue, tripLookupValues, tripMatchesLookup, tripMatchesScope, tripLookupScope } from "./parking-lookup"
 import { behaviorLookupKeys, clearBehaviorLookup, lookupBandOptions, lookupCutoff, lookupEventOptions, prepareBehaviorLookup } from "./behavior-lookup"
-import { behaviorGuests, dwellMinutes, fineBandIndex, hourLabel, tripEvents, tripGuest, tripVehicle } from "./behavior-model"
+import { dwellMinutes, fineBandIndex, hourLabel, tripEvents, tripGuest, tripVehicle } from "./behavior-model"
 import type { BehaviorEvent, EventIndex } from "./behavior-model"
 
 export const tripLabel = (trip: Trip) => trip.plate || trip.id
@@ -221,6 +221,9 @@ export function TripLookupFields({ params, update, data, events = [] }: { params
       ? durationGroups[bucket - 1] : "",
     mode === "nightly" ? "Mỗi dòng là một xe trong một đêm; một xe có thể có nhiều dòng." : "",
     params.has("bExact") ? `Lưu trú ${params.get("bExact")} phút` : "",
+    params.has("bFrom") || params.has("bTo")
+      ? `Lưu trú ${params.get("bFrom") ?? "0"}–${params.get("bTo") ? `${params.get("bTo")} phút` : "trở lên"}`
+      : "",
     params.has("bHour") ? `Giờ vào ${hourLabel(Number(params.get("bHour")))}` : "",
     params.has("bExitHour") ? `Giờ ra ${hourLabel(Number(params.get("bExitHour")))}` : "",
     params.has("bDays") ? `${params.get("bDays")!.split(",").length} ngày được đối chiếu` : "",
@@ -242,7 +245,7 @@ export function TripLookupFields({ params, update, data, events = [] }: { params
           { value: "Đang trong bãi", label: "Đang trong bãi tại mốc tra cứu" },
           { value: "Đã ra", label: "Đã ra tại mốc tra cứu" },
         ]],
-        ["group", "Loại khách", "Tất cả loại khách", [...behaviorGuests]],
+        ["group", "Loại khách", "Tất cả loại khách", [...parkingGroups]],
         ["lane", "Làn xe", "Tất cả làn", lanes],
         ["dayKind", "Loại ngày", "Tất cả loại ngày", [...dayTypes]],
         ["alert", "Cảnh báo", "Tất cả cảnh báo", [...tripAlertOptions,
@@ -260,7 +263,10 @@ export function TripLookupFields({ params, update, data, events = [] }: { params
         ["bDuration", "Nhóm thời gian lưu trú", "Tất cả nhóm lưu trú", lookupBandOptions],
       ] as const).map(([key, label, allLabel, options]) => <CardLookupMultiFilter key={key} label={label} allLabel={allLabel}
         value={params.get(key)?.split(",") ?? []} options={options}
-        onChange={(values) => update({ [key]: values.join(",") || null })} />)}
+        onChange={(values) => update({
+          [key]: values.join(",") || null,
+          ...(key === "bDuration" ? { bFrom: null, bTo: null, bExact: null } : {}),
+        })} />)}
     </div>
     {context || params.get("adjustment") === "1" ? <div className="parking-lookup-context" role="status">
       <div>

@@ -140,9 +140,11 @@ export function ArrivalsReport({ data, guests, total, drill, classification, spl
   const buckets = byVehicle
     ? behaviorVehicles.filter((label) => label !== unknownBehavior || all.some((row) => row.vehicle === label))
       .map((label) => ({ label, match: (row: BehaviorArrival) => row.vehicle === label, patch: { vehicle: label } }))
-    : dwellBands[bands === "8 nhóm" ? "fine" : "coarse"].map((band) => ({
+    : dwellBands[bands === "8 nhóm" ? "fine" : "coarse"].map((band, bandIndex) => ({
       label: band[2], match: (row: BehaviorArrival) => inBand(row.dwell, band),
-      patch: { bFrom: String(band[0]), bTo: Number.isFinite(band[1]) ? String(band[1]) : null },
+      patch: (bands === "8 nhóm"
+        ? { bDuration: String(bandIndex) }
+        : { bFrom: String(band[0]), bTo: Number.isFinite(band[1]) ? String(band[1]) : null }) as Record<string, string | null>,
     }))
   const cohorts = [...overall, { label: total, rows: all, patch: {} }]
   const bases = cohorts.map((item) => byVehicle ? item.rows.length : item.rows.filter((row) => row.dwell !== null).length)
@@ -279,7 +281,8 @@ export function ReturningReport({ data, drill, open, total }: {
   }))
   return <>
     <BehaviorPanel title="Khách quay lại theo loại xe" note={data.historyDays < 90
-      ? `Khách quen được xác định dựa trên ${data.historyDays} ngày có dữ liệu trước kỳ.` : "Khách quen đã có lượt gửi xe trong 90 ngày trước kỳ."}>
+      ? `Khách quen là biển số đã gửi xe tại khu đô thị trong ${data.historyDays} ngày có dữ liệu trước kỳ. Không áp dụng cho Xe đạp.`
+      : "Khách quen là biển số đã gửi xe tại khu đô thị trong 90 ngày trước kỳ. Không áp dụng cho Xe đạp."}>
       <ParkingTable rows={byType} rowKey={({ label }) => label} rowClass={({ label }) => label === total ? "behavior-row-total" : ""} columns={[
         { label: "Loại xe", cell: ({ label }) => label },
         { label: "Lượt đến", numeric: true, cell: (row) => <Count n={row.arrivals.length} label={`${row.label} · Lượt đến`} drill={drill} patch={row.scope} /> },

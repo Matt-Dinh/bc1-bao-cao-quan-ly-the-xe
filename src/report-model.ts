@@ -9,8 +9,11 @@ import {
   defaults,
   estates,
   initialThresholds,
+  matchFilter,
+  matchParkFilter,
   maxDate,
   normalize,
+  splitFilter,
   today,
   vehicles,
 } from "./data"
@@ -313,10 +316,10 @@ export function snapshot(
 type CardScope = Pick<Filters, "estate" | "park" | "type" | "vehicle">
 type CardPeriod = CardScope & Pick<Filters, "start" | "end">
 const inScope = (card: Card, f: CardScope, park = card.park) =>
-  (!f.estate || card.estate === f.estate) &&
-  (!f.park || park === f.park) &&
-  (!f.type || card.type === f.type) &&
-  (!f.vehicle || card.vehicle === f.vehicle)
+  matchFilter(f.estate, card.estate) &&
+  matchParkFilter(f.park, card.estate, park) &&
+  matchFilter(f.type, card.type) &&
+  matchFilter(f.vehicle, card.vehicle)
 
 function movementsInScope(f: Pick<CardPeriod, "start" | "end">, kinds: readonly string[], thresholds: ((estate: string) => Threshold) | undefined,
   matchesScope: (card: Card, park: string) => boolean) {
@@ -435,14 +438,21 @@ export function reportLookupFilters(applied: Filters, selection: ReportLookupSel
     mode: "snapshot",
     start: applied.start,
     end: applied.end,
-    estate: lookupSelection(selection.kind !== "alert" ? selection.estate || applied.estate : applied.estate),
+    estate: selection.kind !== "alert" && selection.estate ? [selection.estate] : splitFilter(applied.estate),
     park: [],
-    type: lookupSelection(applied.type),
-    vehicle: lookupSelection(applied.vehicle),
+    type: splitFilter(applied.type),
+    vehicle: splitFilter(applied.vehicle),
   }
-  const park = selection.kind === "metric" ? selection.park || applied.park : applied.park
-  filters.park = park ? lookupParkOptions.filter((option) => selected(filters.estate, option.estate) &&
-    option.value === lookupParkKey(option.estate, park)).map((option) => option.value) : []
+  const parkList = selection.kind === "metric" && selection.park ? [selection.park] : splitFilter(applied.park)
+  filters.park = parkList.length
+    ? lookupParkOptions
+        .filter(
+          (option) =>
+            selected(filters.estate, option.estate) &&
+            parkList.some((item) => item === option.value || option.value === lookupParkKey(option.estate, item)),
+        )
+        .map((option) => option.value)
+    : []
   if (selection.kind === "metric") {
     const { index } = selection
     if (index >= 2 && index <= 5) return { ...filters, mode: "movement", movement: [movementKinds[index - 2]] }

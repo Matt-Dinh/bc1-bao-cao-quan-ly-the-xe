@@ -4,11 +4,11 @@ import { date, fmt } from "./data"
 import { Button, Field, Heading, Overlay, Select } from "./ui"
 import { TextLink } from "./parking-ui"
 import type { ExportParking, UpdateParams } from "./parking-ui"
-import { allowedSites, canOpen, shiftDay, siteById, vnToday } from "./parking-model"
+import { allowedSites, canOpen, parkingGroups, parkingVehicles, shiftDay, siteById, vnToday } from "./parking-model"
 import type { ParkingAccess, Trip } from "./parking-model"
 import { tripLookupValue, tripLookupValues } from "./parking-lookup"
 import {
-  behaviorGuests, behaviorPeriod, behaviorPeriodError, behaviorScope, behaviorVehicles, buildBehaviorData, canEditEvent,
+  behaviorPeriod, behaviorPeriodError, behaviorScope, buildBehaviorData, canEditEvent,
   canEditHoliday, canExportBehavior, canReadBehavior, canSeePlates, estateName, eventTypes, summarizeEvents,
 } from "./behavior-model"
 import type { BehaviorData, BehaviorFilters, ReturningVehicle } from "./behavior-model"
@@ -44,6 +44,7 @@ type Props = {
   model: ReturnType<typeof useParking>
   tripUpdates?: Trip[]
   update: UpdateParams
+  openTrips: (patch: Record<string, string | null>) => void
   manageEvent: (id: string, origin: string) => void
   backToReport: (origin: string) => void
   notify: (message: string) => void
@@ -66,7 +67,7 @@ function Denied() {
   return <div className="parking-banner error" role="alert"><ShieldAlert size={17} />Bạn không có quyền truy cập trang này.</div>
 }
 
-function BehaviorReport({ access, params, model, tripUpdates, update, manageEvent, notify }: Props) {
+function BehaviorReport({ access, params, model, tripUpdates, update, openTrips, manageEvent, notify }: Props) {
   const yesterday = shiftDay(vnToday(), -1)
   const { cutoff } = model
   const section = readBehaviorSection(params.get("behaviorSection"))
@@ -140,13 +141,29 @@ function BehaviorReport({ access, params, model, tripUpdates, update, manageEven
     if (!canOpen(access, "parking-trips")) { notify("Bạn không có quyền tra cứu lượt xe."); return }
     const origin = new URLSearchParams(params)
     origin.delete("module")
-    const mode = new URLSearchParams(window.location.search).get("mode") ?? "behavior"
-    const target = new URLSearchParams({ module: "parking-trips", mode, originScreen: behaviorReport, origin: origin.toString(),
-      start: applied.start, end: statsCutoff, tripMode: "incoming", bContext: label, bCutoff: cutoff })
-    const conditions = { estate: tripLookupValue(applied.estates), site: tripLookupValue(applied.sites),
-      vehicle: tripLookupValue(applied.vehicles), group: tripLookupValue(applied.guests), ...patch }
-    for (const [name, value] of Object.entries(conditions)) if (value) target.set(name, value)
-    window.open(`${window.location.pathname}?${target}`, "_blank", "noopener")
+    const effectiveEstates = patch.estate ? patch.estate.split("|").filter(Boolean) : applied.estates
+    const scopedSites = patch.site !== undefined
+      ? patch.site
+      : tripLookupValue(applied.sites.filter((id) => !effectiveEstates.length || effectiveEstates.includes(siteById(id)?.estate ?? "")))
+    const drillStart = applied.start > statsCutoff ? statsCutoff : applied.start
+    const target: Record<string, string | null> = {
+      originScreen: behaviorReport,
+      origin: origin.toString(),
+      start: drillStart,
+      end: statsCutoff,
+      tripMode: "incoming",
+      bContext: label,
+      bCutoff: cutoff,
+    }
+    const conditions: Record<string, string | null | undefined> = {
+      estate: tripLookupValue(applied.estates),
+      site: scopedSites,
+      vehicle: tripLookupValue(applied.vehicles),
+      group: tripLookupValue(applied.guests),
+      ...patch,
+    }
+    for (const [name, value] of Object.entries(conditions)) if (value) target[name] = value
+    openTrips(target)
   }
   const exportFile: ExportParking = (name, make, count) => {
     if (!canExportBehavior(access) || name === "DanhSachBienSo" && !canSeePlates(access)) return
@@ -180,7 +197,7 @@ function BehaviorReport({ access, params, model, tripUpdates, update, manageEven
       <LookupFilterPanel label="Bộ lọc Báo cáo phân tích hành vi" className="behavior-lookup-panel"
         pending={JSON.stringify(draft) !== appliedKey} disabled={!!periodError} busy={busy && JSON.stringify(draft) === appliedKey}
         onApply={run} onClear={() => {
-          const cleared = { ...applied, estates: [], sites: [], vehicles: [], guests: [] }
+          const cleared = { ...applied, estates: [], sites: [], vehicles: [], guests: ["Vãng lai"] }
           setDraft(cleared)
           setFilterNotice("")
           run(cleared)
@@ -198,9 +215,9 @@ function BehaviorReport({ access, params, model, tripUpdates, update, manageEven
             options={optionsSites.map(({ id, label }) => ({ value: id, label }))} onChange={(values) => set({ sites: values })}
             note="Tên khu đô thị đi kèm giúp phân biệt các bãi xe trùng tên." />
           <CardLookupMultiFilter label="Phương tiện" allLabel="Tất cả phương tiện" value={draft.vehicles}
-            options={fieldOptions(behaviorVehicles)} onChange={(values) => set({ vehicles: values })} />
+            options={fieldOptions(parkingVehicles)} onChange={(values) => set({ vehicles: values })} />
           <CardLookupMultiFilter label="Loại khách" allLabel="Tất cả loại khách" value={draft.guests}
-            options={fieldOptions(behaviorGuests)} onChange={(values) => set({ guests: values })} />
+            options={fieldOptions(parkingGroups)} onChange={(values) => set({ guests: values })} />
         </div>
         <p className="lookup-multi-hint">{lookupMatchHint}</p>
         {filterNotice && <p className="lookup-multi-notice" role="status">{filterNotice}</p>}
@@ -229,8 +246,20 @@ function BehaviorReport({ access, params, model, tripUpdates, update, manageEven
         {data && <>
           <p className="behavior-result-period"><CalendarDays size={14} />{date(applied.start)} – {date(applied.end)}
             <span>·</span>{applied.guests.length ? applied.guests.join(", ") : "Tất cả loại khách"}
+            {(!applied.guests.length || applied.guests.includes("Thuê bao")) && (
+              <span className="behavior-scope-hint">· Đang gộp cả khách Thuê bao (tỷ lệ quay lại &amp; lưu trú sẽ gồm xe gửi cố định)</span>
+            )}
           </p>
-          <BehaviorDashboard data={data} events={events} drill={drill} open={openSection} />
+          <BehaviorDashboard
+            data={data}
+            events={visibleEvents}
+            allEventCount={events.length}
+            eventType={eventTypesApplied.length === 1 ? eventTypesApplied[0] : ""}
+            onEventType={(value) => update({ eventType: value || null })}
+            onlyBicycle={applied.vehicles.length === 1 && applied.vehicles[0] === "Xe đạp"}
+            drill={drill}
+            open={openSection}
+          />
         </>}
       </>}
     </>}

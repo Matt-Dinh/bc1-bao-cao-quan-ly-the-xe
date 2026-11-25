@@ -82,7 +82,7 @@ export default function RevenueFilters({ screen, filter, cutoff, access, params,
         change({ estate: value, site: kept.join("|"), shift: null, unit: null, voucherUnit: null, voucherSource: null, voucherDetail: null })
       }} />
       {showSite && multi("Bãi xe", "site", "Tất cả bãi xe", sites.filter((site) => revenueMatches(site.estate, scope.estate)).map((site) => ({ value: site.id, label: site.label })))}
-      {showVehicle && multi("Phương tiện", "vehicle", "Tất cả phương tiện", [...parkingVehicles, "Chưa xác định"])}
+      {showVehicle && multi("Phương tiện", "vehicle", "Tất cả phương tiện", [...parkingVehicles])}
       {history && <Field label="Tra cứu theo"><Select value={form.changeDate || "recorded"} options={[
         { value: "recorded", label: "Ngày ghi nhận" }, { value: "origin", label: "Ngày doanh thu gốc" },
       ]} onChange={(event) => change({ changeDate: event.target.value })} /></Field>}

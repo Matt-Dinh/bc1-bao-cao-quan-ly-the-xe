@@ -10,6 +10,18 @@
 .behavior-panel-heading h2 { margin: 0; }
 .behavior-panel-heading p { font-size: 11px; line-height: 1.5; color: #697483; margin: 5px 0 0; }
 .behavior-result-period { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: #697483; font-size: 12px; margin: 1px 0 13px; }
+.behavior-scope-hint { color: #8a591c; font-size: 11px; }
+.behavior-card-tools { display: flex; align-items: center; gap: 8px; }
+.behavior-card-tools .select-wrap { width: 155px; }
+.behavior-card-tools .input { height: 29px; font-size: 11px; padding-block: 3px; }
+.behavior-card-tools .select-wrap > svg { top: 8px; }
+.behavior-bar-row { display: grid; align-items: center; grid-template-columns: minmax(90px, 1fr) minmax(50px, 1.9fr) minmax(86px, auto); gap: 8px; color: #46536a; font-size: 11px; }
+.behavior-bar-row.peak > span:first-child { color: #283548; font-weight: 600; }
+.behavior-bar-row.peak .behavior-bar-track i { background: #2860ac; }
+.behavior-bar-value { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 5px; white-space: nowrap; }
+.behavior-bar-value small { color: #7a8596; font-size: 10px; min-width: 38px; text-align: right; }
+.behavior-bullet-row small.behavior-positive { color: #218568; }
+.behavior-bullet-track i.behavior-bar-negative { background: #9db4d2; }
 .behavior-kpis.parking-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .behavior-kpis .summary-value, .behavior-kpis .summary-sub { display: block; }
 .behavior-kpis button:disabled { cursor: default; }
@@ -33,7 +45,6 @@
 .parking-legend .behavior-line-key { height: 2px; width: 16px; background: #3f76bc; }
 .parking-legend .behavior-event-key { border-radius: 50%; background: #3c9198; }
 .behavior-bars { display: grid; gap: 7px; }
-.behavior-bar-row { display: grid; align-items: center; grid-template-columns: minmax(90px, 1fr) minmax(50px, 2fr) minmax(42px, auto); gap: 8px; color: #46536a; font-size: 11px; }
 .behavior-bar-row > :last-child { text-align: right; justify-content: flex-end; }
 .behavior-bar-track { min-width: 0; height: 9px; display: block; border-radius: 3px; background: #f0f3f7; }
 .behavior-bar-track i { display: block; height: 100%; border-radius: inherit; }

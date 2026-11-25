@@ -121,6 +121,10 @@ export const percent = (n: number, digits = 1) =>
     ? `${n.toLocaleString("vi-VN", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`
     : "—"
 export const normalize = (s: string) => s.toUpperCase().replace(/[.\-\s]/g, "")
+export const splitFilter = (value: string) => (value ? value.split("|").filter(Boolean) : [])
+export const matchFilter = (selected: string, value: string) => !selected || splitFilter(selected).includes(value)
+export const matchParkFilter = (selected: string, estate: string, park: string) =>
+  !selected || splitFilter(selected).some((item) => item === park || item === `${estate}::${park}`)
 export type Card = {
   unitId?: string
   note?: string
@@ -271,10 +275,10 @@ export function filterCards(
   const q = normalize(search.trim())
   return items.filter(
     (c) =>
-      (!f.estate || c.estate === f.estate) &&
-      (!f.park || c.park === f.park) &&
-      (!f.type || c.type === f.type) &&
-      (!f.vehicle || c.vehicle === f.vehicle) &&
+      matchFilter(f.estate, c.estate) &&
+      matchParkFilter(f.park, c.estate, c.park) &&
+      matchFilter(f.type, c.type) &&
+      matchFilter(f.vehicle, c.vehicle) &&
       (f.status
         ? c.status === f.status
         : includeLost || c.status !== "Mất / hỏng") &&

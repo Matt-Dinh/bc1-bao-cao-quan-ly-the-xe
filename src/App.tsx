@@ -74,10 +74,13 @@ import {
   filterCards,
   fmt,
   initialThresholds,
+  matchFilter,
+  matchParkFilter,
   maxDate,
   normalize,
   percent,
   screens,
+  splitFilter,
   today,
   vehicles,
 } from "./data"
@@ -116,6 +119,8 @@ import {
   inCirculationGroup,
   isReportCardLookup,
   lossBreakdown,
+  lookupParkKey,
+  lookupParkOptions,
   lookupSnapshotDay,
   lookupCards,
   managementReport,
@@ -182,7 +187,10 @@ const getInitial = () => {
   const f = { ...defaults }
   for (const key of Object.keys(f) as Array<keyof Filters>)
     if (p.has(key)) f[key] = p.get(key)!.slice(0, 100)
-  if (f.estate && !estates.some((e) => e.id === f.estate)) f.estate = ""
+  if (f.estate)
+    f.estate = splitFilter(f.estate)
+      .filter((id) => estates.some((e) => e.id === id))
+      .join("|")
   const validDate = (value: string) =>
     /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     Number.isFinite(Date.parse(value)) &&
@@ -196,19 +204,24 @@ const getInitial = () => {
     daysBetween(f.start, f.end) >= 31
   )
     f.start = `${f.end.slice(0, 7)}-01`
-  if (!cardTypes.includes(f.type)) f.type = ""
-  if (!vehicles.includes(f.vehicle)) f.vehicle = ""
+  if (f.type) f.type = splitFilter(f.type).filter((t) => cardTypes.includes(t)).join("|")
+  if (f.vehicle) f.vehicle = splitFilter(f.vehicle).filter((v) => vehicles.includes(v)).join("|")
   if (!["Trong kho", "Đang hoạt động", "Khóa", "Mất / hỏng"].includes(f.status))
     f.status = ""
   if (!cardAlertIds.some((id) => String(id + 1) === f.alert)) f.alert = ""
   if (f.expiry && !validDate(f.expiry)) f.expiry = ""
-  if (
-    f.park &&
-    !estates.some(
-      (e) => (!f.estate || e.id === f.estate) && e.parks.includes(f.park),
-    )
-  )
-    f.park = ""
+  if (f.park) {
+    const allowedEstates = splitFilter(f.estate)
+    f.park = splitFilter(f.park)
+      .filter((item) =>
+        estates.some(
+          (e) =>
+            (!allowedEstates.length || allowedEstates.includes(e.id)) &&
+            e.parks.some((p) => item === p || item === lookupParkKey(e.id, p)),
+        ),
+      )
+      .join("|")
+  }
   if (screen === "stock") {
     f.status = ""
     f.alert = ""
@@ -449,8 +462,8 @@ function App() {
   }, [baseCards, sortKey, sortDesc])
   const selectedEstates = estates.filter(
     (e) =>
-      (!applied.estate || applied.estate === e.id) &&
-      (!applied.park || e.parks.includes(applied.park)),
+      matchFilter(applied.estate, e.id) &&
+      e.parks.some((p) => matchParkFilter(applied.park, e.id, p)),
   )
   const circulating = baseCards.filter(
     (c) => c.status === "Đang hoạt động" || c.status === "Khóa",
@@ -732,18 +745,24 @@ function App() {
             ]),
           ),
         )
+      const formatParkFilter = (value: string) =>
+        value
+          ? splitFilter(value)
+              .map((item) => lookupParkOptions.find((o) => o.value === item)?.label ?? item)
+              .join(", ")
+          : "Tất cả"
+      const formatEstateFilter = (value: string) =>
+        value ? splitFilter(value).map(estateName).join(", ") : "Tất cả"
       if (screen !== "stock")
         add("ThongTin", [
           {
             "Báo cáo": title.title,
             "Ngày chốt": new Date(applied.end),
             "Dữ liệu chốt đến": new Date(maxDate),
-            "Khu đô thị": applied.estate
-              ? estateName(applied.estate)
-              : "Tất cả",
-            "Bãi xe": applied.park || "Tất cả",
-            "Loại thẻ": applied.type || "Tất cả",
-            "Phương tiện": applied.vehicle || "Tất cả",
+            "Khu đô thị": formatEstateFilter(applied.estate),
+            "Bãi xe": formatParkFilter(applied.park),
+            "Loại thẻ": applied.type ? splitFilter(applied.type).join(", ") : "Tất cả",
+            "Phương tiện": applied.vehicle ? splitFilter(applied.vehicle).join(", ") : "Tất cả",
             "Từ khóa": query || "—",
             "Người xuất": "Admin Local",
             "Thời điểm xuất": new Date(),
@@ -757,12 +776,10 @@ function App() {
             "Từ ngày": new Date(applied.start),
             "Đến ngày": new Date(applied.end),
             "Dữ liệu chốt đến": new Date(maxDate),
-            "Khu đô thị": applied.estate
-              ? estateName(applied.estate)
-              : "Tất cả",
-            "Bãi xe": applied.park || "Tất cả",
-            "Loại thẻ": applied.type || "Tất cả",
-            "Phương tiện": applied.vehicle || "Tất cả",
+            "Khu đô thị": formatEstateFilter(applied.estate),
+            "Bãi xe": formatParkFilter(applied.park),
+            "Loại thẻ": applied.type ? splitFilter(applied.type).join(", ") : "Tất cả",
+            "Phương tiện": applied.vehicle ? splitFilter(applied.vehicle).join(", ") : "Tất cả",
             "Người xuất": "Admin Local",
             "Thời điểm xuất": new Date(),
             Nguồn: "Dữ liệu minh họa",
@@ -788,7 +805,7 @@ function App() {
           "2-BienDongKho",
           selectedEstates.flatMap((e) =>
             e.parks
-              .filter((p) => !applied.park || p === applied.park)
+              .filter((p) => matchParkFilter(applied.park, e.id, p))
               .map((p) => {
                 const v = stockMetrics({ ...applied, estate: e.id, park: p })
                 const losses = lossBreakdown({
@@ -934,108 +951,110 @@ function App() {
     }
   }
 
-  const renderFilterFields = (extra = false) => (
-    <>
-      {!extra && (
-        <>
-          <Field label="Khu đô thị">
-            <Select
-              aria-label="Khu đô thị"
-              value={draft.estate}
-              onChange={(e) => update("estate", e.target.value)}
-              options={[
-                { value: "", label: "Tất cả khu đô thị" },
-                ...estates.map((e) => ({ value: e.id, label: e.name })),
-              ]}
-            />
-          </Field>
-          <Field label="Bãi xe">
-            <Select
-              aria-label="Bãi xe"
-              value={draft.park ? `${draft.estate}:${draft.park}` : ""}
-              onChange={(e) => {
-                if (!e.target.value) update("park", "")
-                else {
-                  const [estate, park] = e.target.value.split(":")
-                  setDraft((old) => ({ ...old, estate, park }))
-                }
-              }}
-              options={[
-                { value: "", label: "Tất cả bãi xe" },
-                ...estates
-                  .filter((e) => !draft.estate || e.id === draft.estate)
-                  .flatMap((e) =>
-                    e.parks.map((p) => ({
-                      value: `${e.id}:${p}`,
-                      label: `${p} · ${e.short}`,
-                    })),
+  const renderFilterFields = (extra = false) => {
+    const draftEstates = splitFilter(draft.estate)
+    const parkChoices = lookupParkOptions.filter(
+      (option) => !draftEstates.length || draftEstates.includes(option.estate),
+    )
+    const rawDraftParks = splitFilter(draft.park)
+    const draftParks = parkChoices
+      .filter(
+        (option) =>
+          rawDraftParks.includes(option.value) ||
+          rawDraftParks.includes(option.value.split("::")[1]),
+      )
+      .map((option) => option.value)
+    return (
+      <>
+        {!extra && (
+          <>
+            <CardLookupMultiFilter
+              label="Khu đô thị"
+              value={draftEstates}
+              allLabel="Tất cả khu đô thị"
+              options={estates.map(({ id, name }) => ({ value: id, label: name }))}
+              onChange={(selectedEstates) => {
+                const keptParks = draftParks.filter((key) =>
+                  lookupParkOptions.some(
+                    (option) =>
+                      option.value === key &&
+                      (!selectedEstates.length || selectedEstates.includes(option.estate)),
                   ),
-              ]}
+                )
+                setDraft((old) => ({
+                  ...old,
+                  estate: selectedEstates.join("|"),
+                  park: keptParks.join("|"),
+                }))
+              }}
             />
-          </Field>
-          <Field label="Loại thẻ">
-            <Select
-              aria-label="Loại thẻ"
-              value={draft.type}
-              onChange={(e) => update("type", e.target.value)}
-              options={[{ value: "", label: "Tất cả loại thẻ" }, ...cardTypes]}
+            <CardLookupMultiFilter
+              label="Bãi xe"
+              value={draftParks}
+              allLabel="Tất cả bãi xe"
+              options={parkChoices}
+              note="Tên khu đô thị đi kèm giúp phân biệt các bãi xe trùng tên."
+              onChange={(selectedParks) => update("park", selectedParks.join("|"))}
             />
-          </Field>
-          <Field label="Phương tiện">
-            <Select
-              aria-label="Phương tiện"
-              value={draft.vehicle}
-              onChange={(e) => update("vehicle", e.target.value)}
-              options={[
-                { value: "", label: "Tất cả phương tiện" },
-                ...vehicles,
-              ]}
+            <CardLookupMultiFilter
+              label="Loại thẻ"
+              value={splitFilter(draft.type)}
+              allLabel="Tất cả loại thẻ"
+              options={cardTypes.map((value) => ({ value, label: value }))}
+              onChange={(values) => update("type", values.join("|"))}
             />
-          </Field>
-        </>
-      )}
-      {extra && (
-        <>
-          <Field label="Trạng thái">
-            <Select
-              aria-label="Trạng thái"
-              value={draft.status}
-              onChange={(e) => update("status", e.target.value)}
-              options={[
-                { value: "", label: "Tất cả (trừ Mất / hỏng)" },
-                "Trong kho",
-                "Đang hoạt động",
-                "Khóa",
-                "Mất / hỏng",
-              ]}
+            <CardLookupMultiFilter
+              label="Phương tiện"
+              value={splitFilter(draft.vehicle)}
+              allLabel="Tất cả phương tiện"
+              options={vehicles.map((value) => ({ value, label: value }))}
+              onChange={(values) => update("vehicle", values.join("|"))}
             />
-          </Field>
-          <Field label="Cảnh báo">
-            <Select
-              aria-label="Cảnh báo"
-              value={draft.alert}
-              onChange={(e) => update("alert", e.target.value)}
-              options={[
-                { value: "", label: "Tất cả cảnh báo" },
-                ...cardAlertIds.map((id) => ({
-                  value: String(id + 1),
-                  label: alertNames[id],
-                })),
-              ]}
-            />
-          </Field>
-          <Field label="Hiệu lực đến">
-            <Input
-              aria-label="Hiệu lực đến"
-              type="date"
-              value={draft.expiry}
-              onChange={(e) => update("expiry", e.target.value)}
-            />
-          </Field>
-        </>
-      )}
-    </>
-  )
+          </>
+        )}
+        {extra && (
+          <>
+            <Field label="Trạng thái">
+              <Select
+                aria-label="Trạng thái"
+                value={draft.status}
+                onChange={(e) => update("status", e.target.value)}
+                options={[
+                  { value: "", label: "Tất cả (trừ Mất / hỏng)" },
+                  "Trong kho",
+                  "Đang hoạt động",
+                  "Khóa",
+                  "Mất / hỏng",
+                ]}
+              />
+            </Field>
+            <Field label="Cảnh báo">
+              <Select
+                aria-label="Cảnh báo"
+                value={draft.alert}
+                onChange={(e) => update("alert", e.target.value)}
+                options={[
+                  { value: "", label: "Tất cả cảnh báo" },
+                  ...cardAlertIds.map((id) => ({
+                    value: String(id + 1),
+                    label: alertNames[id],
+                  })),
+                ]}
+              />
+            </Field>
+            <Field label="Hiệu lực đến">
+              <Input
+                aria-label="Hiệu lực đến"
+                type="date"
+                value={draft.expiry}
+                onChange={(e) => update("expiry", e.target.value)}
+              />
+            </Field>
+          </>
+        )}
+      </>
+    )
+  }
   const cellNumber = (value: number, onClick: () => void, cls = "") => (
     <Button variant="link" className={`number-link ${cls}`} onClick={onClick} disabled={!value}>
       {fmt(value)}
@@ -1211,7 +1230,7 @@ function App() {
                       </tr>
                       {expanded.includes(e.id) &&
                         e.parks
-                          .filter((p) => !applied.park || p === applied.park)
+                          .filter((p) => matchParkFilter(applied.park, e.id, p))
                           .map((p) => {
                             const values = stockMetrics({
                               ...applied,
@@ -1251,7 +1270,13 @@ function App() {
               <span className="table-dot" />
               {selectedEstates.length} khu đô thị{" "}
               <span className="sub-divider" />
-              {applied.park ? 1 : selectedEstates.length * 3} bãi xe
+              {selectedEstates.reduce(
+                (count, e) =>
+                  count +
+                  e.parks.filter((p) => matchParkFilter(applied.park, e.id, p)).length,
+                0,
+              )}{" "}
+              bãi xe
             </span>
             <span>
               <Info size={13} />
@@ -2526,6 +2551,7 @@ function App() {
           {parking && isBehaviorScreen(parking) && <Behavior key={`${parking}/${parkingAccess.role}/${parkingAccess.estate}`} screen={parking}
             access={parkingAccess} params={parkingParams} model={parkingModel} tripUpdates={behaviorTripUpdates}
             update={updateParking} notify={setToast} onDirty={setParkingDirty}
+            openTrips={(patch) => chooseParking("parking-trips", patch)}
             manageEvent={(id, origin) => chooseParking(behaviorOperations, { configView: "Sự kiện", focusEvent: id, fromEvent: origin })}
             backToReport={(origin) => chooseParking(behaviorReport, Object.fromEntries(new URLSearchParams(origin)))} />}
           <div hidden={!!operation || !!parking}>
@@ -2615,7 +2641,7 @@ function App() {
                     {previewState === "stale" ? "Chờ tổng hợp" : "Đã cập nhật"}
                   </span>
                 </div>
-                <section className="panel filter-panel">
+                <section className="panel filter-panel lookup-filter-panel">
                   <div className="filter-heading">
                     <span>
                       <ListFilter size={16} />
@@ -2633,6 +2659,7 @@ function App() {
                     </Button>
                   </div>
                   <div className="filter-grid">{renderFilterFields()}</div>
+                  <p className="lookup-multi-hint">{lookupMatchHint}</p>
                   <div className="filter-second-row">
                     {screen === "stock" ? (
                       <ReportPeriodFields period={draft} min="2026-09-01" max={maxDate} error={error}
@@ -2688,12 +2715,18 @@ function App() {
                     .map((key) => (
                       <span className="filter-chip" key={key}>
                         {key === "estate"
-                          ? estateName(applied.estate)
-                          : key === "alert"
-                            ? alertNames[Number(applied.alert) - 1]
-                            : key === "expiry"
-                              ? `Hiệu lực đến ${date(applied.expiry)}`
-                              : applied[key]}
+                          ? splitFilter(applied.estate).map(estateName).join(", ")
+                          : key === "park"
+                            ? splitFilter(applied.park)
+                                .map((item) => lookupParkOptions.find((o) => o.value === item)?.label ?? item)
+                                .join(", ")
+                            : key === "type" || key === "vehicle"
+                              ? splitFilter(applied[key]).join(", ")
+                              : key === "alert"
+                                ? alertNames[Number(applied.alert) - 1]
+                                : key === "expiry"
+                                  ? `Hiệu lực đến ${date(applied.expiry)}`
+                                  : applied[key]}
                         <Button
                           variant="ghost"
                           aria-label={`Bỏ lọc ${key}`}

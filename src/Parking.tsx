@@ -62,7 +62,7 @@ import { orphanTransactions } from "./parking-supplement-data"
 import { tripRevenueAmounts } from "./revenue-model"
 import { getParkingFeeService } from "./parking-fees"
 import { createDemoParkingFeeService } from "./parking-fees-demo"
-import { tripLookupScope, tripLookupScopeDenied, tripMatchesScope } from "./parking-lookup"
+import { tripLookupScope, tripLookupScopeDenied, tripLookupValue, tripMatchesScope } from "./parking-lookup"
 import { behaviorReportInputs } from "./behavior-lookup"
 import { canReadBehavior, canSeePlates, indexEvents } from "./behavior-model"
 import { behaviorReport, migrateBehaviorLocation } from "./behavior-routes"
@@ -128,14 +128,14 @@ export default function Parking({
   }), [])
   const parkingFeeService = revenue?.feeService ?? getParkingFeeService() ?? demoFeeService
   const defaults = defaultParkingFilters(cutoff)
-  const lookupScope = useMemo(() => screen === "parking-trips" ? tripLookupScope(params) : undefined,
+  const lookupScope = useMemo(() => (screen === "parking-trips" || screen === "parking-report") ? tripLookupScope(params) : undefined,
     [screen, JSON.stringify(params.getAll("estate")), JSON.stringify(params.getAll("site")), JSON.stringify(params.getAll("vehicle"))])
   const filters = useMemo<ParkingFilters>(
     () => ({
       estate: lookupScope ? lookupScope.estates.length === 1 ? lookupScope.estates[0] : "" : params.get("estate") || "",
       site: lookupScope ? lookupScope.sites.length === 1 ? lookupScope.sites[0] : "" : params.get("site") || "",
       vehicle:
-        parkingVehicles.find((vehicle) => (lookupScope ? lookupScope.vehicles[0] : params.get("vehicle")) === vehicle) ??
+        parkingVehicles.find((vehicle) => (screen === "parking-trips" ? lookupScope?.vehicles[0] : params.get("vehicle")) === vehicle) ??
         defaults.vehicle,
       start: params.get("start") ?? defaults.start,
       end: params.get("end") ?? defaults.end,
@@ -149,7 +149,14 @@ export default function Parking({
       defaults.start,
       defaults.end,
       lookupScope,
+      screen,
     ],
+  )
+  const reportSelection = useMemo(
+    () => screen === "parking-report" && lookupScope
+      ? { estates: lookupScope.estates, sites: lookupScope.sites, vehicles: [filters.vehicle] }
+      : lookupScope,
+    [screen, lookupScope, filters.vehicle],
   )
   const menu = parkingMenus.find((menu) => menu.id === screen)!
   const scope = useMemo(() => allowedSites(access), [access])
@@ -201,7 +208,7 @@ export default function Parking({
       try {
         setCalculation({
           key,
-          data: buildParkingReport(trips, settings, filters, access, lookupScope),
+          data: buildParkingReport(trips, settings, filters, access, reportSelection),
         })
       } catch {
         setCalculation((current) => ({
@@ -289,8 +296,11 @@ export default function Parking({
     if (!canOpen(access, "parking-trips")) return
     const origin = new URLSearchParams(params)
     origin.delete("module")
+    const patch = tripLookupPatch(value, filters, settings)
     navigate("parking-trips", {
-      ...tripLookupPatch(value, filters, settings),
+      ...patch,
+      estate: patch.estate ?? (reportSelection ? tripLookupValue(reportSelection.estates) : null),
+      site: patch.site ?? (reportSelection ? tripLookupValue(reportSelection.sites) : null),
       origin: `?${origin}`,
       originScreen: screen,
     })
@@ -512,6 +522,7 @@ export default function Parking({
           error: tripLookupFilterError,
         } : undefined}
         report={screen === "parking-report"}
+        reportParams={screen === "parking-report" ? params : undefined}
         loading={!error && !data && !loadError}
       />
       {mismatches || sourceErrors > 0 ? (

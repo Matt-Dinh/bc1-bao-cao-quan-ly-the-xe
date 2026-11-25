@@ -9,7 +9,6 @@ import { tripLookupScope, tripLookupScopeKeys, tripLookupValue, tripLookupValues
 import { date, estates, fmt } from "./data"
 import { allowedSites, defaultParkingFilters, hasLookupHours, parkingVehicles, periodError, tripLookupMode } from "./parking-model"
 import type { ParkingAccess, ParkingFilters } from "./parking-model"
-import { behaviorVehicles } from "./behavior-model"
 
 export const numberText = (value: number | null | undefined, digits = 0) =>
   value == null
@@ -92,6 +91,7 @@ export function ParkingFiltersBar({
   change,
   lookup,
   report = false,
+  reportParams,
   loading = false,
 }: {
   filters: ParkingFilters
@@ -105,19 +105,34 @@ export function ParkingFiltersBar({
     error: (params: URLSearchParams, filters: ParkingFilters) => string
   }
   report?: boolean
+  reportParams?: URLSearchParams
   loading?: boolean
 }) {
   const [draft, setDraft] = useState(filters)
   useEffect(() => setDraft(filters), [filters])
   const query = lookup?.params.toString() ?? ""
+  const reportScopeInit = report && reportParams ? tripLookupScope(reportParams) : { estates: [] as string[], sites: [] as string[], vehicles: [] as string[] }
+  const reportScopeSig = JSON.stringify({ estates: reportScopeInit.estates, sites: reportScopeInit.sites })
+  const [reportScopeDraft, setReportScopeDraft] = useState<{ estates: string[]; sites: string[] }>(() => ({
+    estates: [...reportScopeInit.estates],
+    sites: [...reportScopeInit.sites],
+  }))
   const [lookupDraft, setLookupDraft] = useState(() => new URLSearchParams(query))
   const [scopeNotice, setScopeNotice] = useState("")
   useEffect(() => { setLookupDraft(new URLSearchParams(query)); setScopeNotice("") }, [query])
+  useEffect(() => {
+    setReportScopeDraft(JSON.parse(reportScopeSig))
+    setScopeNotice("")
+  }, [reportScopeSig])
   const manual = report || !!lookup
   const visible = manual ? draft : filters
   const datesError = manual ? periodError(draft, cutoff) : error
   const lookupError = lookup && !datesError ? lookup.error(lookupDraft, draft) : ""
-  const pending = manual && (parkingFilterKeys.some((key) => draft[key] !== filters[key]) || lookupDraft.toString() !== query)
+  const pending = manual && (
+    parkingFilterKeys.some((key) => draft[key] !== filters[key]) ||
+    lookupDraft.toString() !== query ||
+    (report && JSON.stringify(reportScopeDraft) !== reportScopeSig)
+  )
   const lookupMode = tripLookupMode(lookupDraft)
   const supportsHours = !lookupMode || hasLookupHours(lookupMode)
   const update = (patch: Partial<ParkingFilters>) => {
@@ -132,13 +147,22 @@ export function ParkingFiltersBar({
     }
     return next
   })
-  function apply(next = draft, nextLookup = lookupDraft) {
+  function apply(next = draft, nextLookup = lookupDraft, nextReportScope = reportScopeDraft) {
+    if (report && !lookup) {
+      change({
+        ...next,
+        estate: tripLookupValue(nextReportScope.estates),
+        site: tripLookupValue(nextReportScope.sites),
+      })
+      return
+    }
     const keys = [...new Set([...(lookup ? tripLookupScopeKeys : []), ...(lookup?.params.keys() ?? []), ...nextLookup.keys()])]
     change({ ...next, ...Object.fromEntries(keys.map((key) => [key, nextLookup.get(key)])) })
   }
   const sites = allowedSites(access).filter((site) => !visible.estate || site.estate === visible.estate)
   const lookupScope = tripLookupScope(lookupDraft)
   const lookupSites = allowedSites(access).filter((site) => !lookupScope.estates.length || lookupScope.estates.includes(site.estate))
+  const reportSites = allowedSites(access).filter((site) => !reportScopeDraft.estates.length || reportScopeDraft.estates.includes(site.estate))
   const estateOptions = estates.filter((estate) =>
     allowedSites(access).some((site) => site.estate === estate.id),
   )
@@ -157,8 +181,26 @@ export function ParkingFiltersBar({
             options={lookupSites.map((site) => ({ value: site.id, label: site.label }))}
             onChange={(values) => updateLookup({ site: tripLookupValue(values) })} />
           <CardLookupMultiFilter label="Phương tiện" value={lookupScope.vehicles} allLabel="Tất cả phương tiện"
-            options={(lookupDraft.has("bContext") ? behaviorVehicles : parkingVehicles).map((value) => ({ value, label: value }))}
+            options={parkingVehicles.map((value) => ({ value, label: value }))}
             onChange={(values) => updateLookup({ vehicle: tripLookupValue(values) })} />
+        </> : report ? <>
+          <CardLookupMultiFilter label="Khu đô thị" value={reportScopeDraft.estates} allLabel="Tất cả khu đô thị"
+            options={estateOptions.map(({ id, name }) => ({ value: id, label: name }))}
+            onChange={(estates) => {
+              const keptSites = reportScopeDraft.sites.filter((id) =>
+                allowedSites(access).some((site) => site.id === id && (!estates.length || estates.includes(site.estate))),
+              )
+              setScopeNotice(keptSites.length !== reportScopeDraft.sites.length
+                ? "Đã bỏ các bãi xe không thuộc khu đô thị vừa chọn. Vui lòng kiểm tra lại trước khi áp dụng." : "")
+              setReportScopeDraft({ estates, sites: keptSites })
+            }} />
+          <CardLookupMultiFilter label="Bãi xe" value={reportScopeDraft.sites} allLabel="Tất cả bãi xe"
+            options={reportSites.map((site) => ({ value: site.id, label: site.label }))}
+            onChange={(sites) => setReportScopeDraft((current) => ({ ...current, sites }))} />
+          <Field label="Phương tiện" hint="Chọn riêng từng loại xe để tính đúng sức chứa và tỷ lệ lấp đầy.">
+            <Select aria-label="Phương tiện" value={visible.vehicle} options={[...parkingVehicles]}
+              onChange={(e) => update({ vehicle: e.target.value as ParkingFilters["vehicle"] })} />
+          </Field>
         </> : <>
         <Field label="Khu đô thị">
           <Select
@@ -233,7 +275,7 @@ export function ParkingFiltersBar({
     {lookupError && <p className="lookup-filter-error" role="alert">{lookupError}</p>}
   </LookupFilterPanel>
   return (
-    <Form className="panel filter-panel parking-filter-panel" onSubmit={(event) => {
+    <Form className={`panel filter-panel parking-filter-panel${report ? " lookup-filter-panel" : ""}`} onSubmit={(event) => {
       event.preventDefault()
       if (manual && !datesError && !loading) apply()
     }}>
@@ -242,9 +284,15 @@ export function ParkingFiltersBar({
           <ListFilter size={16} /><strong>{report ? "Điều kiện báo cáo" : "Bộ lọc"}</strong>
           {pending && <span className="filter-pending">Chưa áp dụng</span>}
         </span>
-        {report && <Button variant="ghost" onClick={() => setDraft(defaultParkingFilters(cutoff))}>Đặt lại</Button>}
+        {report && <Button variant="ghost" onClick={() => {
+          setDraft(defaultParkingFilters(cutoff))
+          setReportScopeDraft({ estates: [], sites: [] })
+          setScopeNotice("")
+        }}>Đặt lại</Button>}
       </div>
       {fields}
+      {report && <p className="lookup-multi-hint">{lookupMatchHint}</p>}
+      {report && scopeNotice && <p className="lookup-multi-notice" role="status">{scopeNotice}</p>}
       {manual ? (
         <div className="filter-second-row">
           <ReportPeriodFields period={draft} max={cutoff} error={datesError} onChange={update} />
