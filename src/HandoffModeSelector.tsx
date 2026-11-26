@@ -1,19 +1,51 @@
-import { FileBarChart2, Layers } from "lucide-react"
+import { useState } from "react"
+import { FileBarChart2, Layers, Sparkles, X } from "lucide-react"
 import { handoffModes, isHandoffMode } from "./handoff-mode"
 import type { HandoffMode } from "./handoff-mode"
 import "./handoff-mode.css"
 
+const hintDismissKey = "vparking:handoff-hint-dismissed"
+
 export default function HandoffModeSelector({ value, onChange }: {
   value: HandoffMode; onChange: (mode: HandoffMode) => void
 }) {
-  return <label className="handoff-mode-picker">
-    <Layers size={14} aria-hidden="true" />
-    <span>Mode bàn giao</span>
-    <select aria-label="Mode bàn giao" value={value} title={handoffModes.find(mode => mode.id === value)?.title}
-      onChange={event => { if (isHandoffMode(event.target.value)) onChange(event.target.value) }}>
-      {handoffModes.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
-    </select>
-  </label>
+  const [showHint, setShowHint] = useState(() => {
+    try { return sessionStorage.getItem(hintDismissKey) !== "1" } catch { return true }
+  })
+  const dismissHint = () => {
+    setShowHint(false)
+    try { sessionStorage.setItem(hintDismissKey, "1") } catch {}
+  }
+  return <div className="handoff-mode-wrap">
+    <label className={`handoff-mode-picker${showHint ? " is-highlighted" : ""}`}
+      title="Bấm vào đây để chuyển đổi giữa các gói màn hình bàn giao (Tất cả, Quản lý thẻ, Chỗ đỗ, Doanh thu, Hành vi gửi xe)">
+      <span className="handoff-mode-badge" aria-hidden="true">
+        <span className="handoff-mode-ping" />
+        <Layers size={14} />
+      </span>
+      <span className="handoff-mode-label">Mode bàn giao</span>
+      <select aria-label="Mode bàn giao" value={value}
+        title={handoffModes.find(mode => mode.id === value)?.title}
+        onFocus={dismissHint}
+        onChange={event => {
+          dismissHint()
+          if (isHandoffMode(event.target.value)) onChange(event.target.value)
+        }}>
+        {handoffModes.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+      </select>
+    </label>
+    {showHint && (
+      <div className="handoff-mode-callout" role="status">
+        <Sparkles size={13} aria-hidden="true" />
+        <span>
+          <strong>Chuyển mode bàn giao tại đây</strong> — chọn xem từng phân hệ (Thẻ, Chỗ đỗ, Doanh thu, Hành vi) hoặc tất cả.
+        </span>
+        <button type="button" className="handoff-mode-dismiss" aria-label="Đóng hướng dẫn" onClick={dismissHint}>
+          <X size={13} />
+        </button>
+      </div>
+    )}
+  </div>
 }
 
 export function RevenueReportPending() {
