@@ -35,7 +35,7 @@ export default function RevenueFilters({ screen, filter, cutoff, access, params,
   const units = revenueUnits(state).filter((unit) => revenueMatches(unit.estate, scope.estate) && sites.some((site) => site.estate === unit.estate))
   const multi = (label: string, key: string, allLabel: string, options: readonly (string | { value: string; label: string })[]) => <RevenueMultiFilter label={label} value={form[key] || ""} allLabel={allLabel} options={options} change={(value) => change({ [key]: value })} />
   const fieldOptions = {
-    source: [allOption("Tất cả nguồn thu"), { value: "included", label: "Các khoản có doanh thu" }, ...Object.entries(sources).map(([value, label]) => ({ value, label }))],
+    source: [allOption("Tất cả nguồn thu"), { value: "included", label: "Tính vào doanh thu (trừ Miễn phí & Thuê bao)" }, ...Object.entries(sources).map(([value, label]) => ({ value, label }))],
     amount: [allOption("Tất cả chỉ tiêu"), ...measureOptions],
     balance: [allOption("Tất cả tình trạng"), { value: "paid", label: "Đã thu đủ" }, { value: "unpaid", label: "Chưa thu đủ" }, { value: "debt", label: "Có công nợ voucher" }, { value: "lost", label: "Có thất thu" }, { value: "excess", label: "Có thu thừa" }, { value: "free", label: "Miễn phí toàn bộ" }],
     policy: [allOption("Tất cả chính sách"), { value: "*", label: "Có áp dụng miễn / giảm" }, ...state.policies.map((row) => ({ value: row.code, label: row.name }))],

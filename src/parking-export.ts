@@ -196,7 +196,7 @@ export function summaryWorkbook(
   actor: string,
   exportedAt: number,
 ) {
-  const workbook: Workbook = {
+  const workbook: Record<string, ExportRow[]> = {
     "Thông tin": [
       {
         "Khu đô thị":

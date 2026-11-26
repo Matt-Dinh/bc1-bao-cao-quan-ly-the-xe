@@ -2,11 +2,11 @@ import { estates } from "./data"
 import { allowedSites, dayAt, dayStart, daysIn, goLive, shiftDay, siteById, vnNow } from "./parking-model"
 import type { ParkingSettings, Trip } from "./parking-model"
 import { readSettings } from "./parking-data"
-import { buildLedger, deltaFor, monthEnd, revenueCutoff, revenueShifts, revenueVoucherWorkspace } from "./revenue-model"
+import { buildLedger, defaultSapConfigs, deltaFor, monthEnd, revenueCutoff, revenueShifts, revenueVoucherWorkspace } from "./revenue-model"
 import type { Charge, Closing, LedgerRow, RevenueState } from "./revenue-model"
 import type { VoucherApplication, VoucherSource, VoucherUnit } from "./revenue-vouchers"
 
-export const revenueDemoVersion = 3
+export const revenueDemoVersion = 4
 const actor = "BQL · Dữ liệu minh họa"
 const merge = <T,>(existing: T[], added: T[], key: (row: T) => string) => {
   const ids = new Set(existing.map(key))
@@ -110,7 +110,13 @@ export function withRevenueDemo(state: RevenueState, now = vnNow(), settings: Pa
   })
   payments.push(...units.filter((unit) => unit.active && unit.type === "Gian hàng").map((unit) => ({ id: `DEMO-TT-RECENT-${unit.id}`, unit: unit.id, amount: 50000, day: anchor,
     document: `DEMO-UNC-RECENT-${unit.id}`, month: "", note: "Thanh toán phần vé âm đợt mới · minh họa", actor, at: dayStart(anchor) + 900 })))
-  let next: RevenueState = { ...state, demoVersion: revenueDemoVersion, demoAnchor: anchor,
+  const upgradedConfigs = state.configs.map((config) => {
+    const sap = defaultSapConfigs[config.estate]
+    if (!sap) return config
+    const isLegacyPlaceholder = (!config.mall && !config.company) || config.company === "VCR"
+    return isLegacyPlaceholder ? { ...config, ...sap } : config
+  })
+  let next: RevenueState = { ...state, configs: upgradedConfigs, demoVersion: revenueDemoVersion, demoAnchor: anchor,
     voucherWorkspace: { ...workspace, units: merge(workspace.units, units, (row) => row.id), sources: merge(workspace.sources, sources, (row) => row.id), codes: merge(workspace.codes, codes, (row) => row.code), applications: merge(workspace.applications, applications, (row) => row.id) },
     demoCharges: merge(state.demoCharges ?? [], charges, (row) => row.id), papers: merge(state.papers, papers, (row) => row.id), receipts: merge(state.receipts, receipts, (row) => row.id), payments: merge(state.payments, payments, (row) => row.id),
     policies: merge(state.policies, [{ ...state.policies[0], code: "DEMO-CS-OLD", name: "Ưu đãi sự kiện đã kết thúc", from: shiftDay(anchor, -50), until: shiftDay(anchor, -8), active: false, note: "Chính sách minh họa đã ngừng" }], (row) => row.code) }

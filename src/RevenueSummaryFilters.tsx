@@ -1,27 +1,139 @@
 import { useEffect, useState } from "react"
 import { ListFilter, Search } from "lucide-react"
-import { Button, Field, Form, Input, Select } from "./ui"
+import { Button, Form } from "./ui"
 import { estates } from "./data"
-import { allowedSites } from "./parking-model"
+import { allowedSites, shiftDay } from "./parking-model"
 import type { ParkingAccess } from "./parking-model"
 import type { UpdateParams } from "./parking-ui"
+import ReportPeriodFields from "./ReportPeriodFields"
 import RevenueMultiFilter from "./RevenueMultiFilter"
+import { revenuePeriodError } from "./revenue-model"
+import { revenueMatches, revenueValues } from "./revenue-filter-values"
 
-export default function RevenueSummaryFilters({ estate, site, month, cutoff, access, update }: {
-  estate: string; site: string; month: string; cutoff: string; access: ParkingAccess; update: UpdateParams;
+export default function RevenueSummaryFilters({
+  estate,
+  site,
+  start,
+  end,
+  cutoff,
+  access,
+  update,
+}: {
+  estate: string
+  site: string
+  start: string
+  end: string
+  cutoff: string
+  access: ParkingAccess
+  update: UpdateParams
 }) {
-  const [draft, setDraft] = useState({ estate, site, month })
-  useEffect(() => setDraft({ estate, site, month }), [estate, site, month])
+  const [draft, setDraft] = useState({ estate, site, start, end })
+  useEffect(() => setDraft({ estate, site, start, end }), [estate, site, start, end])
   const sites = allowedSites(access)
-  const pending = draft.estate !== estate || draft.site !== site || draft.month !== month
-  return <Form className="panel filter-panel lookup-filter-panel revenue-filter-panel" onSubmit={(event) => { event.preventDefault(); update({ ...draft, page: null }) }}>
-    <div className="filter-heading"><span><ListFilter size={16} /><strong>Bộ lọc tra cứu</strong>{pending && <span className="filter-pending">Chưa áp dụng</span>}</span><Button variant="ghost" onClick={() => { const value = { estate, site: "", month }; setDraft(value); update({ ...value, page: null }) }}>Xóa bộ lọc</Button></div>
-    <div className="filter-grid lookup-filter-row">
-      <Field label="Khu đô thị"><Select aria-label="Khu đô thị" value={draft.estate} options={estates.filter((item) => sites.some((site) => site.estate === item.id)).map((item) => ({ value: item.id, label: item.name }))} onChange={(event) => setDraft({ ...draft, estate: event.target.value, site: "" })} /></Field>
-      <RevenueMultiFilter label="Bãi xe" value={draft.site} allLabel="Tất cả bãi xe" options={sites.filter((site) => site.estate === draft.estate).map((site) => ({ value: site.id, label: site.label }))} change={(site) => setDraft({ ...draft, site })} />
-      <Field label="Kỳ kế toán"><Input type="month" max={cutoff.slice(0, 7)} value={draft.month} onChange={(event) => setDraft({ ...draft, month: event.target.value })} /></Field>
-    </div>
-    <p className="lookup-multi-hint">Tổng hợp và chốt theo từng khu đô thị, từng kỳ kế toán; có thể đối chiếu nhiều bãi xe.</p>
-    <div className="lookup-filter-footer"><Button variant="primary" type="submit" disabled={!/^\d{4}-\d{2}$/.test(draft.month) || draft.month > cutoff.slice(0, 7)}><Search size={14} />Áp dụng</Button></div>
-  </Form>
+  const permittedEstates = estates.filter((item) => sites.some((s) => s.estate === item.id))
+  const filteredSites = sites.filter((item) => revenueMatches(item.estate, draft.estate))
+  const pending = draft.estate !== estate || draft.site !== site || draft.start !== start || draft.end !== end
+  const error = revenuePeriodError({ estate: draft.estate, site: draft.site, vehicle: "", start: draft.start, end: draft.end }, cutoff)
+  const isLatestDay = draft.start === cutoff && draft.end === cutoff
+
+  const apply = () => {
+    if (error) return
+    update({
+      estate: draft.estate || null,
+      site: draft.site || null,
+      start: draft.start,
+      end: draft.end,
+      month: null,
+      closeStatus: null,
+      page: null,
+    })
+  }
+
+  const reset = () => {
+    const next = { estate: access.estate || "", site: "", start: shiftDay(cutoff, -6), end: cutoff }
+    setDraft(next)
+    update({
+      estate: next.estate || null,
+      site: null,
+      start: next.start,
+      end: next.end,
+      month: null,
+      closeStatus: null,
+      page: null,
+    })
+  }
+
+  return (
+    <Form
+      className="panel filter-panel lookup-filter-panel revenue-filter-panel"
+      aria-label="Bộ lọc Doanh thu tổng hợp"
+      onSubmit={(event) => {
+        event.preventDefault()
+        apply()
+      }}
+    >
+      <div className="filter-heading">
+        <span>
+          <ListFilter size={16} />
+          <strong>Bộ lọc tra cứu</strong>
+          {pending && <span className="filter-pending">Chưa áp dụng</span>}
+        </span>
+        <Button variant="ghost" onClick={reset}>
+          Xóa bộ lọc
+        </Button>
+      </div>
+      <div className="filter-grid lookup-filter-row">
+        <RevenueMultiFilter
+          label="Khu đô thị"
+          value={draft.estate}
+          allLabel="Tất cả khu đô thị"
+          options={permittedEstates.map((item) => ({ value: item.id, label: item.name }))}
+          change={(value) => {
+            const keptSites = revenueValues(draft.site).filter((id) =>
+              sites.some((item) => item.id === id && revenueMatches(item.estate, value)),
+            )
+            setDraft({ ...draft, estate: value, site: keptSites.join("|") })
+          }}
+        />
+        <RevenueMultiFilter
+          label="Bãi xe"
+          value={draft.site}
+          allLabel="Tất cả bãi xe"
+          options={filteredSites.map((item) => ({ value: item.id, label: item.label }))}
+          change={(value) => setDraft({ ...draft, site: value })}
+        />
+      </div>
+      <p className="lookup-multi-hint">
+        Tổng hợp số liệu đã tự động chốt theo ngày doanh thu; chọn nhiều khu đô thị để xuất gộp 1 file ZFI014 lên SAP.
+      </p>
+      <div className="lookup-time-section">
+        <div className="lookup-time-fields">
+          <ReportPeriodFields
+            period={{ start: draft.start, end: draft.end }}
+            max={cutoff}
+            error={error}
+            label="Khoảng ngày doanh thu"
+            onChange={(period) => setDraft({ ...draft, start: period.start, end: period.end })}
+          >
+            <div className="quick-dates">
+              <Button
+                variant="ghost"
+                aria-pressed={isLatestDay}
+                className={isLatestDay ? "quick-selected" : ""}
+                onClick={() => setDraft({ ...draft, start: cutoff, end: cutoff })}
+              >
+                Ngày gần nhất (T-1)
+              </Button>
+            </div>
+          </ReportPeriodFields>
+        </div>
+      </div>
+      <div className="lookup-filter-footer">
+        <Button variant="primary" type="submit" disabled={!!error}>
+          <Search size={14} />
+          Áp dụng
+        </Button>
+      </div>
+    </Form>
+  )
 }

@@ -94,5 +94,4 @@
   .revenue-donut-wrap { width: 155px; }
   .revenue-donut-total strong { font-size: 19px; }
 }
-.revenue-source-documents .drawer { width: min(1120px, 100vw); }
 .revenue-lookup-filters .lookup-filter-row { grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); }

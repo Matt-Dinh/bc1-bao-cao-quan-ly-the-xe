@@ -5,8 +5,9 @@ import { Button, Heading } from "./ui"
 import { date, estates } from "./data"
 import { allowedSites, dayAt, parkingRoles, shiftDay, vnToday } from "./parking-model"
 import type { ParkingAccess } from "./parking-model"
+import { ParkingTabs } from "./parking-ui"
 import type { ExportParking, UpdateParams } from "./parking-ui"
-import { auditRevenue, buildLedger, incidentCharges, isRevenueScreen, revenueAccess, revenueCutoff, revenueMenus, revenuePeriodError } from "./revenue-model"
+import { auditRevenue, buildLedger, incidentCharges, isPeriodClosed, isRevenueScreen, revenueAccess, revenueCutoff, revenueMenus, revenuePeriodError } from "./revenue-model"
 import type { RevenueFilter, RevenueScreen, RevenueState } from "./revenue-model"
 import RevenueDashboard from "./RevenueDashboard"
 import type { RevenueNavigate } from "./RevenueDashboard"
@@ -17,8 +18,8 @@ import { RevenueClose, RevenueDebt } from "./RevenueOperations"
 import { RevenueReceipts } from "./RevenueInputs"
 import VoucherManagement from "./VoucherManagement"
 import { voucherPage } from "./voucher-navigation"
-import RevenueSourceDocuments, { RevenueSourceActions } from "./RevenueSourceDocuments"
-import { openRevenueEntry, revenueEntryRedirect } from "./revenue-entry"
+import RevenueSourceDocuments from "./RevenueSourceDocuments"
+import { closeRevenueEntry, openRevenueEntry, revenueEntryKind, revenueEntryRedirect } from "./revenue-entry"
 import type { RevenueEntryKind } from "./revenue-entry"
 import { revenueMatches, revenueValues } from "./revenue-filter-values"
 import { RevenueConfiguration } from "./RevenueConfiguration"
@@ -51,6 +52,7 @@ export default function Revenue({ screen, params, access, model, state, save, up
     return { ...base, ...Object.fromEntries(["estate", "site", "vehicle", "start", "end"].filter((key) => values.has(key)).map((key) => [key, values.get(key)!])) }
   }, [estate, site, filterCutoff, params, screen])
   const [reportActions, setReportActions] = useState<HTMLDivElement | null>(null)
+  const [closeActions, setCloseActions] = useState<HTMLDivElement | null>(null)
   const [voucherActions, setVoucherActions] = useState<HTMLDivElement | null>(null)
   const [lookupActions, setLookupActions] = useState<HTMLDivElement | null>(null)
   const [configActions, setConfigActions] = useState<HTMLDivElement | null>(null)
@@ -88,14 +90,27 @@ export default function Revenue({ screen, params, access, model, state, save, up
     return <div className="panel parking-forbidden"><ShieldAlert size={34} /><span>403</span><Heading level={1}>Bạn không có quyền truy cập</Heading>
       <Button variant="primary" onClick={home}>Về trang chủ</Button></div>
   }
-  const periodLocked = Object.keys(state.periods).filter((key) => key.endsWith(filter.end.slice(0, 7)))
+  const reportMonth = filter.end.slice(0, 7)
   const estateOptions = estates.filter((item) => accessible.some((site) => site.estate === item.id) && revenueMatches(item.id, estate))
+  const closedEstatesCount = estateOptions.filter((item) => isPeriodClosed(state, item.id, reportMonth, cutoff)).length
   const ready = !needsLedger || loaded
   const operationProps = { state, ledger, parking: settings, trips: trips ?? [], access, filter, cutoff, actor, params, update, navigate, exportFile, save, notify, operations }
   const openSource = (kind: RevenueEntryKind, create: boolean, reference?: string) => {
     const row = kind === "receipt" ? state.receipts.find((item) => item.id === reference) : undefined
     update({ ...openRevenueEntry(params, filter, kind, create, vnToday()), ...(reference ? { entry_q: reference } : {}), ...(row ? { entry_start: dayAt(row.at), entry_end: dayAt(row.at) } : {}) })
   }
+  const activeEntry = screen === "revenue-lookup" ? revenueEntryKind(params) : null
+  const isEntryInline = !!activeEntry && params.get("entryAction") !== "new"
+  const lookupTabs = [
+    { key: "transactions" as const, label: "Danh sách giao dịch" },
+    ...(revenueAccess(access, "revenue-receipt") ? [{ key: "receipt" as const, label: "Phiếu thu cấp thẻ" }] : []),
+    { key: "history" as const, label: "Điều chỉnh sau chốt" },
+  ]
+  const currentLookupTab = isEntryInline && activeEntry === "receipt" && revenueAccess(access, "revenue-receipt")
+    ? "Phiếu thu cấp thẻ"
+    : isEntryInline && activeEntry === "history"
+      ? "Điều chỉnh sau chốt"
+      : "Danh sách giao dịch"
   return <div className="parking-module revenue-module">
     {!detail && <>
       <div className="breadcrumbs"><span>{menu.group}</span><ChevronRight size={12} /><span className="current-crumb">{title}</span></div>
@@ -104,11 +119,14 @@ export default function Revenue({ screen, params, access, model, state, save, up
           ? "Thiết lập chính sách miễn, giảm phí gửi xe và thứ tự áp dụng theo bãi xe, phương tiện."
           : screen === "revenue-settings"
             ? "Thiết lập giờ bắt đầu ngày doanh thu, thuế suất VAT, ngưỡng quá hạn công nợ và mã SAP theo khu đô thị."
-            : screen === "revenue-voucher" ? "Dữ liệu minh họa · GMT+7"
-            : `Số liệu đến hết ngày doanh thu ${date(cutoff)} · GMT+7 · Dữ liệu minh họa`}</p></div>
+            : screen === "revenue-lookup"
+              ? `Sổ chi tiết và đối soát các giao dịch doanh thu đến hết ngày doanh thu ${date(cutoff)} · GMT+7`
+              : screen === "revenue-voucher" ? "Dữ liệu minh họa · GMT+7"
+              : `Số liệu đến hết ngày doanh thu ${date(cutoff)} · GMT+7 · Dữ liệu minh họa`}</p></div>
         {screen === "revenue-report" && <div ref={setReportActions} className="parking-actions" />}
+        {screen === "revenue-close" && <div ref={setCloseActions} className="parking-actions op-heading-actions" />}
         {screen === "revenue-voucher" && !params.get("voucherEdit") && !params.get("merchantEdit") && params.get("voucherTab") !== "report" && <div ref={setVoucherActions} className="op-heading-actions voucher-heading-actions" />}
-        {screen === "revenue-lookup" && !detail && <div className="parking-actions op-heading-actions"><RevenueSourceActions access={access} open={openSource} /><div ref={setLookupActions} /></div>}
+        {screen === "revenue-lookup" && !detail && <div ref={setLookupActions} className="parking-actions op-heading-actions" />}
         {(screen === "revenue-policies" || screen === "revenue-settings") && <div ref={setConfigActions} className="parking-actions op-heading-actions" />}
         {origin && ["revenue-lookup", "revenue-debt"].includes(screen) && <Button onClick={() => {
           const old = new URLSearchParams(origin)
@@ -117,21 +135,35 @@ export default function Revenue({ screen, params, access, model, state, save, up
           navigate(Object.fromEntries(old), isRevenueScreen(target) ? target : "revenue-report", false)
         }}><ArrowLeft size={15} />{new URLSearchParams(origin).get("module") === "revenue-voucher" ? "Quay lại Voucher" : "Quay lại báo cáo"}</Button>}
       </div>
+      {screen === "revenue-lookup" && (
+        <div className="mb-4">
+          <ParkingTabs
+            options={lookupTabs.map((tab) => tab.label)}
+            value={currentLookupTab}
+            change={(label) => {
+              const target = lookupTabs.find((tab) => tab.label === label)?.key
+              if (target === "transactions") update(closeRevenueEntry(params))
+              else if (target === "receipt" || target === "history") openSource(target, false)
+            }}
+          />
+        </div>
+      )}
     </>}
-    {limited && !detail && !params.get("voucherEdit") && <>
+    {limited && !detail && !isEntryInline && !params.get("voucherEdit") && <>
       <RevenueFilters key={screen} screen={screen} filter={filter} cutoff={filterCutoff} access={access} params={params} state={state} ledger={ledger} update={update} />
-      {screen === "revenue-report" && <div className="revenue-period-status">Kỳ {filter.end.slice(0, 7).split("-").reverse().join("/")} ·
-        {estateOptions.every((item) => periodLocked.includes(`${item.id}/${filter.end.slice(0, 7)}`)) ? " Đã chốt kỳ" :
-          estateOptions.some((item) => periodLocked.includes(`${item.id}/${filter.end.slice(0, 7)}`)) ? ` ${estateOptions.filter((item) => periodLocked.includes(`${item.id}/${filter.end.slice(0, 7)}`)).length}/${estateOptions.length} khu đã chốt kỳ` : " Đang mở"}</div>}
+      {screen === "revenue-report" && <div className="revenue-period-status">Kỳ {reportMonth.split("-").reverse().join("/")} ·
+        {estateOptions.length > 0 && closedEstatesCount === estateOptions.length ? " Đã tự động chốt kỳ" :
+          closedEstatesCount > 0 ? ` ${closedEstatesCount}/${estateOptions.length} khu đã chốt kỳ` : " Đang mở"}</div>}
     </>}
     {needsLedger && loaded?.error && <div className="parking-banner error"><TriangleAlert size={16} />Không tải được dữ liệu <Button onClick={() => setAttempt((n) => n + 1)}>Thử lại</Button></div>}
     {!ready && (!limited || !error) && <div className="panel parking-empty" role="status"><LoaderCircle className="animate-spin" size={20} />Đang tải dữ liệu…</div>}
-    {ready && (!limited || !error || detail) && <>
+    {ready && (!limited || !error || detail || isEntryInline) && <>
       {screen === "revenue-report" && <RevenueDashboard {...operationProps}
         exportAction={(action) => reportActions ? createPortal(action, reportActions) : null} />}
-      {screen === "revenue-lookup" && <RevenueLookup {...operationProps} openParking={openParking} openSource={(kind, reference) => openSource(kind, false, reference)}
+      {screen === "revenue-lookup" && (!isEntryInline || detail) && <RevenueLookup {...operationProps} openParking={openParking} openSource={(kind, reference) => openSource(kind, false, reference)}
         headerActions={(actions) => lookupActions ? createPortal(actions, lookupActions) : null} />}
-      {screen === "revenue-close" && <RevenueClose {...operationProps} />}
+      {screen === "revenue-close" && <RevenueClose {...operationProps}
+        headerActions={(actions) => closeActions ? createPortal(actions, closeActions) : null} />}
       {screen === "revenue-debt" && <RevenueDebt {...operationProps} />}
       {screen === "revenue-receipt" && <RevenueReceipts {...operationProps} />}
       {screen === "revenue-voucher" && <VoucherManagement access={access} params={params} update={update} exportFile={exportFile} actor={actor} notify={notify} onDirty={onDirty}
@@ -140,7 +172,8 @@ export default function Revenue({ screen, params, access, model, state, save, up
         policies={screen === "revenue-policies"} onDirty={onDirty}
         headerActions={(actions) => configActions ? createPortal(actions, configActions) : null} />}
     </>}
-    {screen === "revenue-lookup" && ready && <RevenueSourceDocuments {...operationProps} />}
+    {screen === "revenue-lookup" && ready && !detail && <RevenueSourceDocuments {...operationProps}
+      headerActions={(actions) => lookupActions ? createPortal(actions, lookupActions) : null} />}
     <footer className="page-footer"><span>VParking CMS · {menu.title}</span><span>Dữ liệu minh họa · GMT+7</span></footer>
   </div>
 }

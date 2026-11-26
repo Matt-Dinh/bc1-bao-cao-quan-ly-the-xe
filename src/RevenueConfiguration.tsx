@@ -59,7 +59,7 @@ const auditFieldLabels: Record<string, string> = {
   mall: "Mã TTTM",
   company: "Mã công ty",
   branch: "Mã chi nhánh",
-  customer: "Mã khách hàng",
+  customer: "Số hợp đồng (Assignment)",
 }
 
 function formatAuditField(key: string, value: unknown): string {
@@ -324,7 +324,8 @@ export function RevenueConfiguration({
       !Number.isInteger(value.overdue) ||
       value.overdue < 1 ||
       value.overdue > 365 ||
-      ![value.mall, value.company, value.branch, value.customer].every((item) => referencePattern.test(item))
+      ![value.mall, value.company, value.branch].every((item) => referencePattern.test(item)) ||
+      !value.customer || value.customer.length > 50
     ) {
       setError("Kiểm tra giờ bắt đầu, ngày hiệu lực từ ngày mai, VAT, ngưỡng quá hạn và mã SAP.")
       return
@@ -372,7 +373,7 @@ export function RevenueConfiguration({
     "Mã TTTM": row.mall || "Chưa khai báo",
     "Công ty": row.company || "Chưa khai báo",
     "Chi nhánh": row.branch || "Chưa khai báo",
-    "Mã khách hàng": row.customer || "Chưa khai báo",
+    "Số hợp đồng (Assignment)": row.customer || "Chưa khai báo",
     "Thao tác": "",
   })
 
@@ -661,7 +662,7 @@ export function RevenueConfiguration({
             data={configData}
             empty={hasActiveFilters ? <NoMatches clear={clearFilters} /> : "Chưa có cấu hình doanh thu"}
             link={(row, key) => {
-              if (["Mã TTTM", "Công ty", "Chi nhánh", "Mã khách hàng"].includes(key)) {
+              if (["Mã TTTM", "Công ty", "Chi nhánh", "Số hợp đồng (Assignment)"].includes(key)) {
                 const value =
                   key === "Mã TTTM"
                     ? row.mall
@@ -940,10 +941,10 @@ export function RevenueConfiguration({
                 <div className="parking-form-grid">
                   {(
                     [
-                      ["mall", "Mã TTTM"],
-                      ["company", "Mã công ty"],
-                      ["branch", "Mã chi nhánh"],
-                      ["customer", "Mã khách hàng"],
+                      ["mall", "Mã TTTM (Profit Center)"],
+                      ["company", "Mã công ty (Company Code)"],
+                      ["branch", "Mã chi nhánh (Business Place)"],
+                      ["customer", "Số hợp đồng (Assignment)"],
                     ] as const
                   ).map(([key, label]) => (
                     <Field key={key} label={label} required>

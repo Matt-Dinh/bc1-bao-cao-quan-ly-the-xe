@@ -1,18 +1,19 @@
 import { useMemo, useState } from "react"
-import { Download, LockKeyhole, Plus, UnlockKeyhole } from "lucide-react"
-import { Badge, Button, Field, Heading, Input, Label, Overlay, Select, Textarea } from "./ui"
+import type { ReactNode } from "react"
+import { CalendarCheck2, Download, FileSpreadsheet, Plus, TriangleAlert } from "lucide-react"
+import { Badge, Button, Field, Input, Overlay, Select, Textarea } from "./ui"
 import { date, estates, fmt, normalize } from "./data"
-import { allowedSites, displayTime, isDay, siteById, vnNow, vnToday } from "./parking-model"
+import { allowedSites, isDay, siteById, vnNow, vnToday } from "./parking-model"
 import type { ParkingAccess, ParkingSettings, Trip } from "./parking-model"
-import { allOption, ExportButton, ParkingPagination, ParkingSearch, ParkingTabs, pageNumber, pageSize, Segments, TextLink } from "./parking-ui"
+import { allOption, ExportButton, ParkingPagination, ParkingTabs, pageNumber, pageSize, TextLink } from "./parking-ui"
 import type { ExportParking, ExportRow, UpdateParams } from "./parking-ui"
 import {
-  auditRevenue, closeStatus, configAt, dateCell, daysFor, revenueUnits, estateName, methods, monthEnd,
+  auditRevenue, configAt, dateCell, daysFor, revenueUnits, estateName, isPeriodClosed, monthEnd,
   revenueShifts, revenueWrite, scopeRows, timestampCell, totals, unitTypes,
 } from "./revenue-model"
-import type { LedgerRow, Payment, RevenueFilter, RevenueShift, RevenueState } from "./revenue-model"
+import type { LedgerRow, Payment, RevenueFilter, RevenueState } from "./revenue-model"
 import type { OperationState } from "./operations-model"
-import { balances, changeRow, dayRow, debtRow, groupRows, money, voucherDebtMeasures, voucherDebtValue } from "./revenue-tables"
+import { balances, debtRow, groupRows, money, voucherDebtMeasures, voucherDebtValue } from "./revenue-tables"
 import type { VoucherDebtMeasure } from "./revenue-tables"
 import type { Balance } from "./revenue-tables"
 import { isPositiveMoney, referencePattern, validDayUntil, validMonth } from "./revenue-operations"
@@ -22,6 +23,13 @@ import { revenueMatches, revenueValues } from "./revenue-filter-values"
 import RevenueSummaryFilters from "./RevenueSummaryFilters"
 import { revenueHistoryParams } from "./revenue-entry"
 import type { RevenueNavigate } from "./RevenueDashboard"
+import {
+  buildRevenueSummaryWorkbook,
+  buildZfi014Workbook,
+  cashAndQrTotal,
+  isSapConfigComplete,
+  summaryShiftRow,
+} from "./revenue-zfi014"
 
 export interface RevenueOperationProps {
   state: RevenueState; ledger: LedgerRow[]; parking: ParkingSettings; trips: Trip[]; access: ParkingAccess;
@@ -48,138 +56,172 @@ export function PagedData<T>({ rows, data, id, params, update, link, empty, colu
     <ParkingPagination count={rows.length} size={size} page={page} change={(value) => update({ page: String(value) })}
       changeSize={(value) => update({ size: String(value), page: null })} /></>
 }
-export function RevenueClose({ state, ledger, parking, access, filter, cutoff, actor, params, update, navigate, exportFile, save, notify }: RevenueOperationProps) {
+export function RevenueClose({
+  state,
+  ledger,
+  parking,
+  access,
+  filter,
+  cutoff,
+  actor,
+  params,
+  update,
+  navigate,
+  exportFile,
+  headerActions,
+}: RevenueOperationProps & { headerActions?: (actions: ReactNode) => ReactNode }) {
   const monthParam = params.get("month") ?? ""
-  const month = validMonth(monthParam) && monthParam <= cutoff.slice(0, 7) ? monthParam : cutoff.slice(0, 7)
-  const estate = revenueValues(filter.estate)[0] || access.estate || allowedSites(access)[0]?.estate || ""
-  const sites = allowedSites(access).filter((site) => site.estate === estate)
-  const last = monthEnd(month) < cutoff ? monthEnd(month) : cutoff
-  const days = daysFor(`${month}-01`, last)
-  const allShifts = days.flatMap((day) => sites.flatMap((site) => revenueShifts(site.id, day, parking, state)))
-  const shiftsByDay = groupRows(allShifts, (shift) => shift.day)
-  const periodKey = `${estate}/${month}`
-  const locked = !!state.periods[periodKey]
-  const status = params.get("closeStatus") || "Tất cả"
-  const byShift = groupRows(ledger.filter((row) => row.estate === estate && row.revenueDay.startsWith(month)), (row) => row.shiftId)
-  const allRows = allShifts.filter((shift) => revenueMatches(shift.site, filter.site) &&
-    (status === "Tất cả" || (status === "Đã chốt") === !!state.closes[shift.id]))
-  const done = days.filter((day) => (shiftsByDay.get(day) ?? []).every((shift) => state.closes[shift.id]))
-  const canClosePeriod = !locked && monthEnd(month) <= cutoff && days.length > 0 && done.length === days.length
-  const adjustments = state.changes.filter((item) => item.estate === estate && item.recorded.startsWith(month))
-  const [closing, setClosing] = useState<RevenueShift | null>(null)
-  const [chosen, setChosen] = useState<string[]>([])
-  const [cash, setCash] = useState("")
-  const [note, setNote] = useState("")
-  const [error, setError] = useState("")
-  const [reopen, setReopen] = useState<RevenueShift | null>(null)
-  const [period, setPeriod] = useState(false)
-  const opened = closing ? allShifts.filter((shift) => shift.day === closing.day && shift.site === closing.site) : []
-  const allDayTotals = allShifts.flatMap((shift) => byShift.get(shift.id) ?? [])
-  const closeShift = () => {
-    const mismatch = chosen.some((id) => (byShift.get(id) ?? []).some((row) =>
-      row.revenue !== row.collected + row.debt + row.lost - row.excess || row.revenue !== row.net + row.vat))
-    if (!chosen.length || !cash || (cash === "Lệch" || mismatch) && !note.trim()) {
-      setError(!chosen.length ? "Vui lòng chọn ít nhất một ca." : !cash ? "Vui lòng đối chiếu tiền mặt với sổ chốt ca." :
-        mismatch ? "Vui lòng nhập ghi chú cho ca có lượt không cân bằng." : "Vui lòng nhập ghi chú khi tiền mặt lệch.")
-      return
-    }
-    if (save((latest) => {
-      if (!revenueWrite(access, "shift") || latest.periods[periodKey] || chosen.some((id) => latest.closes[id])) throw new Error("Trạng thái chốt đã thay đổi.")
-      const next = { ...latest.closes }
-      for (const id of chosen) next[id] = { actor, at: vnNow(), note: [cash, note.trim()].filter(Boolean).join(" · "),
-        frozen: Object.fromEntries((byShift.get(id) ?? []).filter((row) => row.source === "MT").map((row) => [row.id, row])) }
-      return auditRevenue({ ...latest, closes: next }, actor, "Chốt ca", estate, `${chosen.join(", ")} · ${cash} · ${note}`)
-    })) { setClosing(null); notify(`Đã chốt ${chosen.length} ca.`) }
-  }
-  const unclose = (reason: string) => {
-    if (!reopen) return
-    if (save((latest) => {
-      if (!revenueWrite(access, "reopen") || latest.periods[periodKey] || !latest.closes[reopen.id]) throw new Error("Ca không thể mở chốt.")
-      const next = { ...latest.closes }
-      delete next[reopen.id]
-      return auditRevenue({ ...latest, closes: next }, actor, "Mở chốt", estate, `${reopen.id} · ${reason}`)
-    })) { setReopen(null); notify("Đã mở chốt ca.") }
-  }
-  const closePeriod = () => {
-    if (!canClosePeriod) return
-    if (save((latest) => {
-      if (!revenueWrite(access, "period") || latest.periods[periodKey] || allShifts.some((shift) => !latest.closes[shift.id])) throw new Error("Kỳ còn ca chưa chốt.")
-      return auditRevenue({ ...latest, periods: { ...latest.periods, [periodKey]: { actor, at: vnNow(), note: "Chốt kỳ", frozen: {} } } },
-        actor, "Chốt kỳ", estate, month)
-    })) { setPeriod(false); notify("Đã chốt kỳ.") }
-  }
-  const sap = () => exportFile("ZFI014", () => ({
-    "Thông tin": [{ "Khu đô thị": estateName(estate), "Kỳ": month, "Ngày đưa vào": done.join(", "),
-      "Ngày chưa chốt bị loại": days.filter((day) => !done.includes(day)).join(", "), "Người xuất": actor, "Thời điểm": timestampCell(vnNow()),
-      "Mã SAP": configAt(state, estate, last).mall || "Chưa khai báo mã TTTM" }],
-    "1-SoLieu": done.flatMap((day) => {
-      const config = configAt(state, estate, day)
-      if (!config.mall) return []
-      const total = totals(allDayTotals.filter((row) => row.revenueDay === day))
-      return [{ "mã TTTM": config.mall, "tổng tiền": total.collected, "Ngày doanh thu": dateCell(day),
-        ...Object.fromEntries(methods.map((method, i) => [method, total.moneyByMethod[i]])), "Chưa VAT": total.net, "VAT": total.vat }]
-    }),
-    "2-CongNo": [
-      ...allDayTotals.filter((row) => row.debt && done.includes(row.revenueDay)).map((row) => ({
-        "Loại": "Phát sinh", "Ngày": dateCell(row.revenueDay), "Đơn vị": row.voucher?.unit, "Chứng từ": row.id, "Số tiền": row.debt,
-      })),
-      ...state.payments.filter((row) => !row.canceled && row.day.startsWith(month) && row.unit.startsWith(`${estate}-`)).map((row) => ({
-        "Loại": "Đã trả", "Ngày": dateCell(row.day), "Đơn vị": row.unit, "Chứng từ": row.document, "Số tiền": row.amount,
-      })),
-    ],
-    "3-DieuChinh": adjustments.map(changeRow),
-  }))
-  const shiftData = (shift: RevenueShift) => ({ "Ngày doanh thu": dateCell(shift.day), "Bãi xe": siteById(shift.site)?.label,
-    ...dayRow(shift.name, byShift.get(shift.id) ?? [], state.closes[shift.id] ? "Đã chốt" : "Chưa chốt"),
-    "Người chốt": state.closes[shift.id]?.actor, "Thời điểm": state.closes[shift.id] ? timestampCell(state.closes[shift.id].at) : null,
-    "Trạng thái ngày": closeStatus(state, estate, shift.day, shiftsByDay.get(shift.day) ?? []), "Thao tác": "",
-  })
-  return <>
-    <RevenueSummaryFilters estate={estate} site={filter.site} month={month} cutoff={cutoff} access={access} update={update} />
-    <div className="panel parking-toolbar revenue-toolbar">
-      <div className="parking-inline">
-        {revenueWrite(access, "period") && <Button onClick={sap}><Download size={15} />Tải số liệu ZFI014</Button>}
-        {revenueWrite(access, "period") && <Button variant="primary" disabled={locked} onClick={() => setPeriod(true)}>Chốt kỳ</Button>}
+  const hasExplicitRange = Boolean(params.get("start") || params.get("end"))
+  const fallbackMonth = !hasExplicitRange && validMonth(monthParam) && monthParam <= cutoff.slice(0, 7) ? monthParam : ""
+  const start = fallbackMonth ? `${fallbackMonth}-01` : filter.start
+  const end = fallbackMonth ? (monthEnd(fallbackMonth) < cutoff ? monthEnd(fallbackMonth) : cutoff) : filter.end
+  const accessibleSites = allowedSites(access)
+  const permittedEstates = estates.filter((item) => accessibleSites.some((site) => site.estate === item.id)).map((item) => item.id)
+  const estateFilter = filter.estate || access.estate || ""
+  const selectedEstates = estateFilter
+    ? revenueValues(estateFilter).filter((id) => permittedEstates.includes(id))
+    : permittedEstates
+  const sites = accessibleSites.filter((site) => selectedEstates.includes(site.estate) && revenueMatches(site.id, filter.site))
+  const days = daysFor(start, end)
+  const allShifts = useMemo(
+    () => days.flatMap((day) => sites.flatMap((site) => revenueShifts(site.id, day, parking, state))),
+    [days, sites, parking, state],
+  )
+  const scopedLedger = useMemo(
+    () => scopeRows(ledger, { estate: selectedEstates.join("|"), site: filter.site, vehicle: "", start, end }, access, false),
+    [ledger, selectedEstates, filter.site, start, end, access],
+  )
+  const byShift = useMemo(() => groupRows(scopedLedger, (row) => row.shiftId), [scopedLedger])
+  const grandTotal = useMemo(() => totals(scopedLedger), [scopedLedger])
+  const grandCashQr = cashAndQrTotal(grandTotal)
+  const adjustments = useMemo(
+    () =>
+      state.changes.filter(
+        (item) =>
+          selectedEstates.includes(item.estate) &&
+          revenueMatches(item.site, filter.site) &&
+          item.recorded >= start &&
+          item.recorded <= end,
+      ),
+    [state.changes, selectedEstates, filter.site, start, end],
+  )
+  const missingSapEstates = selectedEstates.filter((id) => !isSapConfigComplete(configAt(state, id, end)))
+  const startMonth = start.slice(0, 7)
+  const endMonth = end.slice(0, 7)
+  const allAutoClosedPeriod =
+    selectedEstates.length > 0 &&
+    selectedEstates.every((id) => isPeriodClosed(state, id, endMonth, cutoff))
+  const showEstateColumn = selectedEstates.length > 1
+  const sortedShifts = useMemo(
+    () =>
+      [...allShifts].sort(
+        (a, b) =>
+          b.day.localeCompare(a.day) ||
+          a.estate.localeCompare(b.estate) ||
+          a.site.localeCompare(b.site) ||
+          a.name.localeCompare(b.name),
+      ),
+    [allShifts],
+  )
+
+  const downloadReport = () =>
+    exportFile("BaoCaoDoanhThuTongHop", () =>
+      buildRevenueSummaryWorkbook({
+        state,
+        scopedLedger,
+        shifts: allShifts,
+        estates: selectedEstates,
+        siteFilter: filter.site,
+        days,
+        cutoff,
+        adjustments,
+        actor,
+      }),
+    )
+
+  const downloadZfi014 = () =>
+    exportFile("ZFI014", () =>
+      buildZfi014Workbook({
+        state,
+        ledger,
+        scopedLedger,
+        estates: selectedEstates,
+        days,
+        adjustments,
+        actor,
+      }),
+    )
+
+  const actionsNode = (
+    <>
+      <Button onClick={downloadReport}>
+        <FileSpreadsheet size={15} />
+        Tải báo cáo doanh thu
+      </Button>
+      {revenueWrite(access, "period") && (
+        <Button variant="primary" onClick={downloadZfi014}>
+          <Download size={15} />
+          Tải số liệu ZFI014
+        </Button>
+      )}
+    </>
+  )
+
+  return (
+    <>
+      {headerActions ? (
+        headerActions(actionsNode)
+      ) : (
+        <div className="panel parking-toolbar revenue-toolbar">
+          <div className="parking-inline">{actionsNode}</div>
+        </div>
+      )}
+      <RevenueSummaryFilters
+        estate={estateFilter}
+        site={filter.site}
+        start={start}
+        end={end}
+        cutoff={cutoff}
+        access={access}
+        update={update}
+      />
+      <div className="parking-banner">
+        <CalendarCheck2 size={16} />
+        {allAutoClosedPeriod && startMonth === endMonth
+          ? `Kỳ ${endMonth.split("-").reverse().join("/")} · Đã tự động chốt kỳ`
+          : `Tự động chốt theo ngày doanh thu đến hết ${date(cutoff)} · Kỳ kế toán tự động khóa sổ khi kết thúc tháng`}
+        {adjustments.length > 0 && (
+          <TextLink
+            onClick={() => {
+              const period = { estate: estateFilter, site: filter.site, vehicle: "", start, end }
+              navigate({ ...period, ...revenueHistoryParams(period) }, "revenue-lookup", false)
+            }}
+          >
+            {adjustments.length} khoản điều chỉnh sau chốt
+          </TextLink>
+        )}
       </div>
-    </div>
-    <div className={`parking-banner ${locked ? "" : "warning"}`}><LockKeyhole size={16} />
-      {locked ? "Đã chốt kỳ" : "Kỳ đang mở"} · {done.length}/{days.length} ngày đã chốt
-      {adjustments.length > 0 && <TextLink onClick={() => { const period = { estate, site: "", vehicle: "", start: `${month}-01`, end: last }; navigate({ ...period, ...revenueHistoryParams(period) }, "revenue-lookup", false) }}>
-        {adjustments.length} khoản điều chỉnh sau chốt</TextLink>}
-    </div>
-    {!configAt(state, estate, last).mall && <div className="parking-banner warning">Khu đô thị chưa khai báo mã TTTM cho ZFI014.</div>}
-    <div className="panel">
-      <div className="parking-toolbar"><Segments options={["Tất cả", "Chưa chốt", "Đã chốt"]} value={status} change={(value) => update({ closeStatus: value, page: null })} /></div>
-      <PagedData rows={allRows.sort((a, b) => b.day.localeCompare(a.day) || a.site.localeCompare(b.site) || a.name.localeCompare(b.name))} id={(row) => row.id}
-        params={params} update={update} data={shiftData} link={(row, column) => {
-          if (column !== "Thao tác" || locked) return undefined
-          if (state.closes[row.id] && revenueWrite(access, "reopen")) return <Button variant="ghost" onClick={() => setReopen(row)}><UnlockKeyhole size={15} />Mở chốt</Button>
-          if (!state.closes[row.id] && revenueWrite(access, "shift")) return <Button onClick={() => {
-            setClosing(row); setChosen([row.id]); setCash(""); setNote(""); setError("")
-          }}>Chốt ca</Button>
-        }} />
-    </div>
-    {closing && <Overlay wide title={`Chốt ca · ${siteById(closing.site)?.label}`} subtitle={date(closing.day)} onClose={() => setClosing(null)}
-      footer={<><Button onClick={() => setClosing(null)}>Hủy</Button><Button variant="primary" onClick={closeShift}>Chốt {chosen.length} ca</Button></>}>
-      <DataTable rows={opened} rowKey={(row) => row.id} data={(row) => ({ "Chọn": "", ...shiftData(row) })}
-        link={(row, column) => column === "Chọn" ? <input aria-label={`Chọn ${row.name}`} type="checkbox" disabled={!!state.closes[row.id]}
-          checked={chosen.includes(row.id)} onChange={(e) => setChosen(e.target.checked ? [...chosen, row.id] : chosen.filter((id) => id !== row.id))} /> : undefined} />
-      <div className="parking-form-grid"><Field label="Tiền mặt so với sổ chốt ca" required><Select value={cash}
-        options={[allOption("Chọn kết quả"), "Khớp", "Lệch"]} onChange={(e) => setCash(e.target.value)} /></Field>
-        <Field label="Ghi chú" required={cash === "Lệch"}><Textarea maxLength={500} rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
-          <span className="character-count">{note.length}/500</span></Field></div>
-      {error && <p className="field-message" role="alert">{error}</p>}
-    </Overlay>}
-    {reopen && <ReasonDialog title="Mở chốt ca" description={`${date(reopen.day)} · ${reopen.name}`} action="Mở chốt" close={() => setReopen(null)} submit={unclose} />}
-    {period && <Overlay title={`Chốt kỳ ${month.split("-").reverse().join("/")}`} subtitle={estateName(estate)} onClose={() => setPeriod(false)} dismissOnBackdrop={false}
-      footer={<><Button autoFocus onClick={() => setPeriod(false)}>Hủy</Button><Button variant="primary" disabled={!canClosePeriod} onClick={closePeriod}>Xác nhận chốt kỳ</Button></>}>
-      <p>{done.length}/{days.length} ngày đã chốt · Doanh thu {money(totals(allDayTotals).revenue)} · {adjustments.length} điều chỉnh</p>
-      {monthEnd(month) > cutoff && <p className="field-message">Kỳ chưa kết thúc.</p>}
-      {allShifts.some((shift) => !state.closes[shift.id]) && <p className="field-message">Ca chưa chốt: {allShifts.filter((shift) => !state.closes[shift.id])
-        .map((shift) => `${date(shift.day)} · ${siteById(shift.site)?.name} · ${shift.name}`).join("; ")}</p>}
-      {canClosePeriod && <p className="field-message">Kỳ đã chốt không thể mở lại.</p>}
-    </Overlay>}
-  </>
+      {missingSapEstates.length > 0 && (
+        <div className="parking-banner warning">
+          <TriangleAlert size={16} />
+          Chưa khai báo đủ mã SAP cho ZFI014: {missingSapEstates.map(estateName).join(", ")}.
+        </div>
+      )}
+      <div className="panel">
+        <div className="parking-banner revenue-list-total">
+          <strong>Tổng hợp phạm vi đang xem</strong>
+          {`${money(grandTotal.revenue)} doanh thu · ${money(grandTotal.moneyByMethod[0] ?? 0)} tiền mặt · ${money(grandTotal.moneyByMethod[1] ?? 0)} QR · ${money(grandCashQr)} tiền mặt + QR (ZFI014) · ${money(grandTotal.debt)} voucher · ${money(grandTotal.lost)} thất thu`}
+        </div>
+        <PagedData
+          rows={sortedShifts}
+          id={(row) => row.id}
+          params={params}
+          update={update}
+          data={(shift) => summaryShiftRow(shift, byShift.get(shift.id) ?? [], showEstateColumn)}
+        />
+      </div>
+    </>
+  )
 }
 
 const paymentData = (row: Payment, state: RevenueState): ExportRow => ({

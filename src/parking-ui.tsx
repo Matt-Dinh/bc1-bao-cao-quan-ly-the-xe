@@ -33,7 +33,9 @@ export const parkingFilterKeys = [
 export type UpdateParams = (patch: Record<string, string | null>) => void
 export type ExportCell = string | number | boolean | Date | null | undefined
 export type ExportRow = Record<string, ExportCell>
-export type Workbook = Record<string, ExportRow[]>
+export type RawSheet = { aoa: ExportCell[][]; cols?: number[] }
+export type WorkbookSheet = ExportRow[] | RawSheet
+export type Workbook = Record<string, WorkbookSheet>
 export type ExportLimits = { rows: number; simultaneous: number; days: number }
 export type ExportParking = (
   name: string,

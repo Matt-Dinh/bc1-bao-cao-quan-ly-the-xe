@@ -105,7 +105,7 @@ test("each mode has the expected navigation and behavior keeps one report apart 
       assert.equal(present("Báo cáo doanh thu"), mode === "revenue" || mode === "all", mode)
       assert.equal(present("Tra cứu lượt xe"), ["parking", "all", "behavior"].includes(mode) || mode === "revenue" && !revenuePending, mode)
       assert.equal(present("Cấu hình"), mode !== "behavior" && !revenuePending, mode)
-      if (revenuePending) assert.equal(present("Tra cứu doanh thu"), false)
+      if (revenuePending) assert.equal(present("Đối soát doanh thu"), false)
       if (mode === "behavior") {
         for (const page of ["Báo cáo phân tích hành vi", "Phân tích hành vi khách hàng", "Sự kiện và ngày lễ"])
           assert.ok(present(page), page)

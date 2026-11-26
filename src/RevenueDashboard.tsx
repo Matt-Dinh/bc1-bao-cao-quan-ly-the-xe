@@ -312,7 +312,7 @@ export default function RevenueDashboard({ ledger, state, parking, filter, acces
     <div className="parking-kpis revenue-kpis">{kpis.map((item) => <button type="button" key={item.label}
       className={`summary-card ${item.index === 4 && total.lost ? "parking-kpi-warning" : ""}`}
       disabled={!revenueAccess(access, "revenue-lookup") || item.amount === null}
-      title="Xem tại Tra cứu doanh thu" onClick={() => go({ label: item.label, ...item.drill })}>
+      title="Xem tại Đối soát doanh thu" onClick={() => go({ label: item.label, ...item.drill })}>
       <div className="summary-top">{item.label} (₫)</div><div className="summary-value">{item.amount === null ? "—" : fmt(item.amount)}</div><div className="summary-sub">{item.hint}</div>
     </button>)}</div>
     <div className="parking-chart-layout revenue-chart-layout">

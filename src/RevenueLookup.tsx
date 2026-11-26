@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { ArrowLeft, SlidersHorizontal } from "lucide-react"
-import { Button, Heading } from "./ui"
+import { ArrowLeft, Info, SlidersHorizontal } from "lucide-react"
+import { Badge, Button, Heading } from "./ui"
 import ColumnSettingsDrawer, { readColumnSelection } from "./ColumnSettingsDrawer"
 import { fmt } from "./data"
 import { allowedSites, displayTime, siteById } from "./parking-model"
@@ -15,9 +15,42 @@ import { DataTable } from "./RevenueDashboard"
 import { selectRevenueLookup, revenueLookupReset } from "./revenue-lookup"
 import type { RevenueEntryKind } from "./revenue-entry"
 
-const columns = ["Mã lượt / khoản thu", "Giờ ra / lập", "Bãi xe", "Làn ra", "Loại xe", "Biển số", "Nguồn thu", "Doanh thu (₫)", "Đã thu (₫)", "Còn phải thu (₫)", "Loại / lý do"]
-const moreColumns = ["Khu đô thị", "Số lượt", "Ngày doanh thu", "Ca", "Giờ vào", "Nhóm khách", "Mã thẻ / vé", "Nguồn ghi nhận", "Giá niêm yết (₫)",
-  "Miễn / giảm (₫)", "Chưa VAT (₫)", "VAT (₫)", ...methods.map((method) => `${method} (₫)`), "Tiền thực nhận (₫)", "Công nợ (₫)", "Thất thu (₫)", "Thu thừa (₫)", "Mã voucher", "Mã giao dịch", "Trạng thái chốt", "Cờ"]
+const columns = [
+  "Mã lượt / khoản thu",
+  "Ngày doanh thu",
+  "Ca",
+  "Bãi xe",
+  "Nguồn thu",
+  "Giá niêm yết (₫)",
+  "Miễn / giảm (₫)",
+  "Doanh thu (₫)",
+  "Đã thu (₫)",
+  "Công nợ (₫)",
+  "Thất thu (₫)",
+  "Trạng thái chốt",
+]
+const moreColumns = [
+  "Giờ ra / lập",
+  "Khu đô thị",
+  "Làn ra",
+  "Loại xe",
+  "Biển số",
+  "Số lượt",
+  "Giờ vào",
+  "Nhóm khách",
+  "Mã thẻ / vé",
+  "Nguồn ghi nhận",
+  "Chưa VAT (₫)",
+  "VAT (₫)",
+  ...methods.map((method) => `${method} (₫)`),
+  "Tiền thực nhận (₫)",
+  "Còn phải thu (₫)",
+  "Thu thừa (₫)",
+  "Loại / lý do",
+  "Mã voucher",
+  "Mã giao dịch",
+  "Cờ",
+]
 interface Props {
   ledger: LedgerRow[]; state: RevenueState; access: ParkingAccess; filter: RevenueFilter; cutoff: string;
   params: URLSearchParams; update: UpdateParams; exportFile: ExportParking; openParking: (trip: string, day: string) => void
@@ -25,7 +58,7 @@ interface Props {
   headerActions?: (actions: ReactNode) => ReactNode
 }
 export default function RevenueLookup({ ledger, state, access, filter, cutoff, params, update, exportFile, openParking, openSource, headerActions }: Props) {
-  const key = `vparking:revenue:columns:${access.role}/${access.estate}`
+  const key = `vparking:revenue:columns:v2:${access.role}/${access.estate}`
   const [shown, setShown] = useState<string[]>(() => {
     const saved = readColumnSelection(key)
     const selected = (saved ?? columns).filter((label) => [...columns, ...moreColumns].includes(label))
@@ -51,7 +84,7 @@ export default function RevenueLookup({ ledger, state, access, filter, cutoff, p
     "Số hợp đồng": row.id, "Khách thuê bao": row.customer, "Khu đô thị": estateName(row.estate), "Nhóm": row.group, "Tháng": row.month,
     "Doanh thu (₫)": row.gross, "Đã thu (₫)": row.paid ? row.gross : 0, "Chưa thu (₫)": row.paid ? 0 : row.gross,
   })
-  const exportList = () => exportFile("TraCuuDoanhThu", () => ({
+  const exportList = () => exportFile("TraCuuGiaoDich", () => ({
     [subscriptions ? "Thuê bao" : "Chi tiết"]:
       subscriptions ? subscriptions.map((row) => ({ ...subscriptionData(row), ...(measure ? { [drillColumn]: subscriptionValue(row) } : {}) })) : list.map(exportDetails),
   }), matchCount)
@@ -66,7 +99,7 @@ export default function RevenueLookup({ ledger, state, access, filter, cutoff, p
   }
   if (id && !detail) return <div className="panel parking-empty">Không tìm thấy khoản thu trong phạm vi quyền.<Button onClick={back}>Quay lại</Button></div>
   if (detail) return <>
-    <div className="page-heading"><div><Heading level={1}>Chi tiết doanh thu · {detail.id}</Heading><p className="muted">{sources[detail.source]} · {siteById(detail.site)?.label}</p></div>
+    <div className="page-heading"><div><Heading level={1}>Chi tiết giao dịch · {detail.id}</Heading><p className="muted">{sources[detail.source]} · {siteById(detail.site)?.label}</p></div>
       <div className="parking-actions"><Button onClick={back}><ArrowLeft size={15} /> Quay lại</Button>
         {detail.trip && !detail.id.startsWith("DEMO-") && <Button onClick={() => openParking(detail.trip!.id, detail.revenueDay)}>Mở ở Tra cứu lượt xe</Button>}
         {openSource && revenueAccess(access, "revenue-receipt") && detail.source === "CT" && <Button onClick={() => openSource("receipt", detail.id)}>Xem phiếu thu gốc</Button>}
@@ -100,6 +133,12 @@ export default function RevenueLookup({ ledger, state, access, filter, cutoff, p
   const empty = <NoMatches clear={clear} />
   return <>
     {headerActions ? headerActions(<ExportButton onClick={exportList} />) : <div className="op-heading-actions"><ExportButton onClick={exportList} /></div>}
+    <div className="settings-info">
+      <Info size={16} />
+      <span>
+        Sổ chi tiết mọi giao dịch theo <strong>Ngày doanh thu</strong> và <strong>Trạng thái chốt ca/kỳ</strong> (gồm lượt tại làn, vé giấy đồng bộ từ SOS App, công nợ voucher, phiếu thu cấp thẻ, biên bản mất / hỏng thẻ và doanh thu thuê bao). Bấm mã giao dịch để xem đầy đủ 10 lớp tiền hoặc mở lượt xe gốc tại <strong>Tra cứu lượt xe</strong>.
+      </span>
+    </div>
     <div className="panel">
     <div className="op-table-toolbar lookup-table-toolbar">
       <div className="lookup-result-summary"><span className="count-text" aria-live="polite"><strong>{fmt(matchCount)}</strong> {subscriptions ? "thuê bao" : "khoản thu"}</span></div>
@@ -111,10 +150,21 @@ export default function RevenueLookup({ ledger, state, access, filter, cutoff, p
     </> : <>
       <div className="parking-banner revenue-list-total">
         <strong>{measure ? `Tổng ${titleMeasure} đối chiếu` : "Tổng danh sách"}</strong>
-        {measure ? money(list.reduce((total, row) => total + valueFor(row), 0)) : `${money(sum.revenue)} doanh thu · ${money(sum.paid)} đã thu · ${money(sum.debt + sum.lost)} còn phải thu`}
+        {measure ? money(list.reduce((total, row) => total + valueFor(row), 0)) : `${money(sum.revenue)} doanh thu · ${money(sum.paid)} đã thu · ${money(sum.debt)} công nợ · ${money(sum.lost)} thất thu`}
       </div>
       <DataTable rows={slice(list)} rowKey={(row) => row.id} data={exportDetails} empty={empty} columns={[...shown, ...(measure ? [drillColumn] : [])]}
-        link={(row, key) => key === columns[0] ? <TextLink onClick={() => openDetail(row.id)}>{row.id}</TextLink> : undefined} />
+        link={(row, key) => {
+          if (key === columns[0]) return <TextLink onClick={() => openDetail(row.id)}>{row.id}</TextLink>
+          if (key === "Trạng thái chốt") {
+            const status = state.periods[`${row.estate}/${row.revenueDay.slice(0, 7)}`]
+              ? "Đã chốt kỳ"
+              : state.closes[row.shiftId]
+                ? "Đã chốt"
+                : "Tạm tính"
+            return <Badge tone={status === "Tạm tính" ? "amber" : "green"}>{status}</Badge>
+          }
+          return undefined
+        }} />
     </>}
     <ParkingPagination count={matchCount} page={page} size={size} change={(value) => update({ page: String(value) })}
       changeSize={(value) => update({ size: String(value), page: null })} />

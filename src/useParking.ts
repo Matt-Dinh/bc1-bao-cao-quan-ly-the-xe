@@ -174,8 +174,10 @@ export default function useParking(
     window.setTimeout(async () => {
       try {
         const workbook = make()
+        const sheetLength = (sheet?: Workbook[string]) =>
+          !sheet ? undefined : Array.isArray(sheet) ? sheet.length : sheet.aoa.length
         const detailCount =
-          workbook["6-ChiTiet"]?.length ?? workbook["7-ChiTiet"]?.length ?? workbook["Lượt xe"]?.length ?? count
+          sheetLength(workbook["6-ChiTiet"]) ?? sheetLength(workbook["7-ChiTiet"]) ?? sheetLength(workbook["Lượt xe"]) ?? count
         if (detailCount > limits.rows) {
           notify(limitMessage)
           return

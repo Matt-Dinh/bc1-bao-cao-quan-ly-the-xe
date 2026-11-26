@@ -11,7 +11,7 @@
     "test:parking": "node --test tests/parking-lookup.test.cjs tests/parking-dashboard-links.test.cjs",
     "test:card-links": "node --test tests/card-report-links.test.cjs",
     "test:handoff": "node --test tests/handoff-mode.test.cjs",
-    "test:revenue": "node --test tests/revenue-dashboard-links.test.cjs tests/revenue-vouchers.test.cjs tests/voucher-baseline.test.cjs",
+    "test:revenue": "node --test tests/revenue-dashboard-links.test.cjs tests/revenue-vouchers.test.cjs tests/voucher-baseline.test.cjs tests/revenue-zfi014.test.cjs",
     "test": "tsc src/data.ts src/report-model.ts src/operations-model.ts src/card-import.ts src/card-edit.ts src/demo-scenarios.ts --outDir /tmp/vparking-model-tests --module commonjs --target ES2020 --skipLibCheck && node --test tests/report-model.test.cjs tests/operations.test.cjs tests/subscription-management.test.cjs tests/service-pricing.test.cjs tests/card-edit.test.cjs tests/management-lists.test.cjs tests/demo-scenarios.test.cjs"
   },
   "dependencies": {

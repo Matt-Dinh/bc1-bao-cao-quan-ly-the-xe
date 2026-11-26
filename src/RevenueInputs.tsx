@@ -1,4 +1,5 @@
 import { useState } from "react"
+import type { ReactNode } from "react"
 import { Plus, Upload } from "lucide-react"
 import { Badge, Button, Field, Input, Overlay, Select, Textarea } from "./ui"
 import { fmt, normalize } from "./data"
@@ -156,7 +157,7 @@ export function RevenuePaper({ state, trips, parking, access, filter, cutoff, ac
   </>
 }
 
-export function RevenueReceipts({ state, trips, parking, access, filter, actor, params, update, exportFile, save, notify, operations, startNew = false, formOnly = false, onFormClose }: RevenueOperationProps & { startNew?: boolean; formOnly?: boolean; onFormClose?: () => void }) {
+export function RevenueReceipts({ state, trips, parking, access, filter, actor, params, update, exportFile, save, notify, operations, startNew = false, formOnly = false, onFormClose, headerActions }: RevenueOperationProps & { startNew?: boolean; formOnly?: boolean; onFormClose?: () => void; headerActions?: (actions: ReactNode) => ReactNode }) {
   const sites = allowedSites(access)
   const editable = revenueWrite(access, "receipt")
   const [draft, setDraft] = useState<{ contract: string; site: string; card: string; kind: string; reason: string; amount: string; method: Method; note: string } | null>(() => startNew && editable ? { contract: "", site: "", card: "", kind: "Cấp lần đầu", reason: "", amount: "50000", method: "Tiền mặt", note: "" } : null)
@@ -207,11 +208,17 @@ export function RevenueReceipts({ state, trips, parking, access, filter, actor, 
     "Ghi chú": row.note, "Lý do hủy": row.canceled, "Thao tác": "",
   })
   const closeForm = () => { setDraft(null); onFormClose?.() }
-  return <>{!formOnly && <div className="panel">
-    <div className="parking-toolbar">
-      <div className="parking-inline"><ExportButton onClick={() => exportFile("PhieuThuCapThe", () => ({ "Phiếu thu": rows.map(data) }))} />
+  const exportReceipts = <ExportButton onClick={() => exportFile("PhieuThuCapThe", () => ({ "Phiếu thu": rows.map(data) }))} />
+  return <>{!formOnly && headerActions?.(exportReceipts)}
+    {!formOnly && <div className="panel">
+    <div className="op-table-toolbar lookup-table-toolbar">
+      <span className="count-text" aria-live="polite"><strong>{fmt(rows.length)}</strong> phiếu thu</span>
+      <div className="parking-inline">
+        {!headerActions && exportReceipts}
         {editable && <Button variant="primary" onClick={() => { setQuery(""); setError(""); setDraft({ contract: "", site: "", card: "", kind: "Cấp lần đầu", reason: "",
-          amount: "50000", method: "Tiền mặt", note: "" }) }}><Plus size={15} />Lập phiếu thu</Button>}</div></div>
+          amount: "50000", method: "Tiền mặt", note: "" }) }}><Plus size={15} />Lập phiếu thu</Button>}
+      </div>
+    </div>
     <PagedData rows={rows} id={(row) => row.id} data={data} params={params} update={update} link={(row, key) =>
       key === "Số phiếu" ? <TextLink onClick={() => setDetail(row)}>{row.id}</TextLink> :
       key === "Thao tác" && editable && !row.canceled ? <Button onClick={() => setCancel(row)}>Hủy phiếu thu</Button> : undefined} />

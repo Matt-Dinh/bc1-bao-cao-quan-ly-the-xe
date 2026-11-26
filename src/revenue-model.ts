@@ -9,7 +9,7 @@ import { revenueMatches, revenueIntersects } from "./revenue-filter-values"
 
 export const revenueMenus = [
   { id: "revenue-report", title: "Báo cáo doanh thu", group: "Báo cáo" },
-  { id: "revenue-lookup", title: "Tra cứu doanh thu", group: "Quản lý doanh thu" },
+  { id: "revenue-lookup", title: "Đối soát doanh thu", group: "Quản lý doanh thu" },
   { id: "revenue-close", title: "Doanh thu tổng hợp", group: "Quản lý doanh thu" },
   { id: "revenue-debt", title: "Công nợ voucher", group: "Voucher" },
   { id: "revenue-paper", title: "Thu tiền tại bãi", group: "Chứng từ và lịch sử" },
@@ -40,11 +40,13 @@ export const revenueWrite = (access: ParkingAccess, action: "shift" | "period" |
   }
   return access.role === "admin" || roles[action].includes(access.role)
 }
-export const methods = ["Tiền mặt", "QR", "Chuyển khoản", "Ví", "VinClub"] as const
+export const methods = ["Tiền mặt", "QR", "Ví", "VinClub"] as const
 export type Method = typeof methods[number]
+export const normalizeMethod = (method: string): Method =>
+  method === "Chuyển khoản" ? "QR" : methods.includes(method as Method) ? method as Method : "Tiền mặt"
 export const sources = {
-  VL: "Tại làn", APP: "App khi mất điện", VG: "Vé giấy", MT: "Mất / hỏng thẻ, vé",
-  CT: "Cấp thẻ thuê bao", VA: "Vé âm", FREE: "Miễn phí toàn bộ", SUB: "Lượt thuê bao",
+  VL: "Tại làn", APP: "SOS App (khi mất điện)", VG: "Vé giấy (SOS App)", MT: "Mất / hỏng thẻ, vé",
+  CT: "Cấp thẻ thuê bao", VA: "Công nợ voucher", FREE: "Miễn phí toàn bộ", SUB: "Lượt thuê bao",
 } as const
 export type RevenueSource = keyof typeof sources
 export const lossReasons = ["Mở barrier thủ công", "Lỗi thanh toán", "Thu thiếu", "Chờ xác nhận thanh toán", "Không xác định"] as const
@@ -141,7 +143,7 @@ export function moneyLayers(charge: Pick<Charge, "price" | "discounts" | "paymen
   const revenue = gross - reduction
   const net = Math.round(revenue / (1 + rate / 100))
   const moneyByMethod = methods.map((method) => charge.payments.reduce((sum, payment) =>
-    sum + (payment.method === method && (payment.status === "Thành công" || (payment.status === "Đã hoàn" && payment.amount < 0)) ? payment.amount : 0), 0))
+    sum + (normalizeMethod(payment.method) === method && (payment.status === "Thành công" || (payment.status === "Đã hoàn" && payment.amount < 0)) ? payment.amount : 0), 0))
   const collected = moneyByMethod.reduce((total, value) => total + value, 0)
   const debt = Math.min(revenue, charge.voucher?.negative ? revenue : charge.voucher?.amount ?? 0)
   const difference = revenue - collected - debt
@@ -173,10 +175,17 @@ export function deltaFor(before?: LedgerRow, after?: LedgerRow): Totals {
   next.moneyByMethod = next.moneyByMethod.map((amount, index) => amount - old.moneyByMethod[index])
   return next
 }
+export const defaultSapConfigs: Record<string, Pick<Config, "mall" | "company" | "branch" | "customer">> = {
+  A: { mall: "421020", company: "1142", branch: "B000", customer: "0000300000092" },
+  B: { mall: "421021", company: "1142", branch: "B000", customer: "0000300001279" },
+  C: { mall: "421004", company: "1142", branch: "B000", customer: "0000300000003" },
+}
 export function initialRevenueState(): RevenueState {
   return {
-    configs: estates.map((estate, i) => ({ estate: estate.id, ...fallbackConfig,
-      mall: i < 2 ? estate.code : "", company: i < 2 ? "VCR" : "", branch: i < 2 ? `CN-${estate.id}` : "", customer: i < 2 ? `KH-${estate.id}` : "" })),
+    configs: estates.map((estate) => ({
+      estate: estate.id, ...fallbackConfig,
+      ...(defaultSapConfigs[estate.id] ?? { mall: "", company: "", branch: "", customer: "" }),
+    })),
     policies: [
       ["CS-01", "VinFast miễn 5 giờ đầu", policyTypes[1], 5],
       ["CS-02", "Giảm giá khối văn phòng", policyTypes[2], 20],
@@ -263,11 +272,11 @@ export function chargeForTrip(trip: Trip): Charge | null {
     amount: negative ? afterDiscount : Math.round(afterDiscount / 2), ...(recipient ? { recipient: { ...recipient, active: true } } : {}) } : undefined
   const payable = afterDiscount - (voucher?.amount ?? 0)
   const amount = payable <= 0 || isSupplement ? 0 : trip.paid === 0 && !trip.voucher ? 0 : payable + (index % 401 === 0 ? 5000 : 0)
-  const method = methods[index % 10 < 6 ? 1 : index % 10 < 8 ? 0 : index % 10 === 8 ? 2 : index % 2 ? 3 : 4]
+  const method = methods[index % 10 < 7 ? 1 : index % 10 < 9 ? 0 : Math.floor(index / 10) % 2 ? 2 : 3]
   const payments = amount ? [demoTransaction(`GD-${trip.id}`, amount, trip.exited, method)] : []
   if (amount > 0 && index % 127 === 0) {
     const first = Math.floor(amount / 2)
-    payments.splice(0, 1, demoTransaction(`WEB-${trip.id}`, first, trip.entered, "Chuyển khoản"),
+    payments.splice(0, 1, demoTransaction(`WEB-${trip.id}`, first, trip.entered, "QR"),
       demoTransaction(`GD-${trip.id}`, amount - first, trip.exited, "QR"))
   }
   const pending = payable > 0 && amount === 0 && !isSupplement && index % 2 === 0
@@ -299,7 +308,7 @@ export function buildLedger(trips: Trip[], settings: ParkingSettings, state: Rev
     charges.push({ id: `${batch.id}-${i + 1}`, site: row.site, vehicle: row.vehicle, at, day: row.day,
       shift: row.shift || revenueShifts(row.site, row.day, settings, state).slice(-1)[0].name, source: "VG", count: row.to - row.from + 1,
       price: row.amount, discounts: [], payments: [demoTransaction(batch.id, row.amount, at, row.method)],
-      description: `Series ${row.from} – ${row.to}` })
+      description: `Đồng bộ SOS App · Series ${row.from} – ${row.to}` })
   })
   for (const row of state.receipts) if (!row.canceled) charges.push({
     id: row.id, site: row.site, vehicle: row.vehicle, at: row.at, source: "CT", count: 0, price: row.amount, discounts: [],
@@ -386,8 +395,10 @@ export function recordChange(state: RevenueState, oldRow: LedgerRow | undefined,
     changes: [{ id: crypto.randomUUID(), recorded: revenueDay(at, row.estate, state), origin: row.revenueDay, estate: row.estate,
       reference: row.id, reason, actor, delta: deltaFor(oldRow, newRow), site: row.site }, ...state.changes] }
 }
-export const closeStatus = (state: RevenueState, estate: string, day: string, shifts: RevenueShift[]) => {
-  if (state.periods[`${estate}/${day.slice(0, 7)}`]) return "Đã chốt kỳ"
+export const isPeriodClosed = (state: RevenueState, estate: string, month: string, cutoff?: string) =>
+  Boolean(state.periods[`${estate}/${month}`]) || Boolean(cutoff && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && monthEnd(month) <= cutoff)
+export const closeStatus = (state: RevenueState, estate: string, day: string, shifts: RevenueShift[], cutoff?: string) => {
+  if (isPeriodClosed(state, estate, day.slice(0, 7), cutoff)) return "Đã chốt kỳ"
   const count = shifts.filter((shift) => state.closes[shift.id]).length
   return shifts.length && count === shifts.length ? "Đã chốt" : `Tạm tính · ${count}/${shifts.length} ca`
 }

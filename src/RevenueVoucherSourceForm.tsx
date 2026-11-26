@@ -75,7 +75,7 @@ export default function RevenueVoucherSourceForm({ original, workspace, access, 
         {draft.purpose && <div className="voucher-financial-note"><Badge tone={draft.purpose === "VCR_DISCOUNT" ? "blue" : "orange"}>{draft.purpose === "VCR_DISCOUNT" ? "VCR chịu chi phí" : "Đơn vị trả lại tiền"}</Badge>
           <p>{draft.purpose === "VCR_DISCOUNT" ? "Tiền được miễn ghi vào Miễn / giảm, không tạo công nợ cho đơn vị nhận."
             : `${unit?.name ?? "Đơn vị được chọn"} là bên chịu khoản phí được tài trợ; chỉ phát sinh công nợ sau khi khách sử dụng và lượt đã hoàn tất.`}</p>
-          {draft.purpose === "NEGATIVE_TICKET" && <p>Vé âm bao toàn bộ phí thực tế sau các chính sách miễn / giảm; mỗi lượt chỉ nhận một vé âm.</p>}
+          {draft.purpose === "NEGATIVE_TICKET" && <p>Công nợ voucher (vé âm) bao toàn bộ phí thực tế sau các chính sách miễn / giảm; mỗi lượt chỉ áp dụng một mã.</p>}
         </div>}
       </section>
       <section className="panel parking-detail-panel"><Heading>Phạm vi và số lượng</Heading><div className="parking-form-grid">
